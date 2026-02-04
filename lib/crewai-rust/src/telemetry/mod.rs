@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::env;
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex, OnceLock};
 
 // opentelemetry trace types available for future use when full OTEL SDK
 // initialization is wired up.
@@ -18,17 +18,13 @@ use std::sync::{Arc, Mutex, Once};
 // Singleton
 // ---------------------------------------------------------------------------
 
-static INIT: Once = Once::new();
-static mut INSTANCE: Option<Arc<Mutex<Telemetry>>> = None;
+static INSTANCE: OnceLock<Arc<Mutex<Telemetry>>> = OnceLock::new();
 
 /// Get the global `Telemetry` singleton.
 pub fn telemetry() -> Arc<Mutex<Telemetry>> {
-    unsafe {
-        INIT.call_once(|| {
-            INSTANCE = Some(Arc::new(Mutex::new(Telemetry::new())));
-        });
-        INSTANCE.clone().unwrap()
-    }
+    INSTANCE
+        .get_or_init(|| Arc::new(Mutex::new(Telemetry::new())))
+        .clone()
 }
 
 // ---------------------------------------------------------------------------

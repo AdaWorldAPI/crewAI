@@ -209,7 +209,7 @@ impl ClientAuthScheme for OAuth2ClientCredentials {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // In a full implementation, this would fetch/refresh the token.
         // For the port, we apply the cached token if available.
-        if let Some(ref token) = self.access_token {
+        if let Some(ref token) = self._access_token {
             headers.insert("Authorization".to_string(), format!("Bearer {}", token));
         }
         Ok(())
@@ -233,11 +233,11 @@ pub struct OAuth2AuthorizationCode {
     #[serde(default)]
     pub tls: Option<TLSConfig>,
     #[serde(skip)]
-    access_token: Option<String>,
+    _access_token: Option<String>,
     #[serde(skip)]
-    refresh_token: Option<String>,
+    _refresh_token: Option<String>,
     #[serde(skip)]
-    token_expires_at: Option<f64>,
+    _token_expires_at: Option<f64>,
 }
 
 #[async_trait]
@@ -246,7 +246,7 @@ impl ClientAuthScheme for OAuth2AuthorizationCode {
         &self,
         headers: &mut HashMap<String, String>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(ref token) = self.access_token {
+        if let Some(ref token) = self._access_token {
             headers.insert("Authorization".to_string(), format!("Bearer {}", token));
         }
         Ok(())
