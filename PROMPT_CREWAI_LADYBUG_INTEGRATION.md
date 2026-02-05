@@ -1,16 +1,54 @@
-# crewAI-Rust + Ladybug-rs Integration Prompt
+# crewAI-Rust + Ladybug-rs Integration Prompt (v2)
 
 ## Context
 
-**crewAI-rust** (`/lib/crewai-rust/`) is a 1:1 Rust port of the crewAI Python multi-agent framework: 209 source files, ~36K lines, 25+ modules, compiling with 0 errors.
+**crewAI-rust** (`/lib/crewai-rust/`) is a 1:1 Rust port of the crewAI Python multi-agent framework: 215+ source files, ~38K lines, 25+ modules, 163 passing tests, compiling with 0 errors.
 
-**ladybug-rs** (`AdaWorldAPI/ladybug-rs`) is a cognitive database: SQL + Cypher + Vector ANN + Hamming distance over Lance/Arrow, with NARS reasoning, GrammarTriangle embeddings, blackboard state, and Arrow Flight gRPC.
+**ladybug-rs** (`AdaWorldAPI/ladybug-rs`) is **not merely a cognitive database**. It is a complete agent orchestration substrate: ~27K lines implementing a `CrewBridge` that composes agent registries, persona modeling, A2A messaging, semantic kernel operations, handover policies, thinking templates, blackboard awareness, filter pipelines, guardrails, workflow DAGs, memory banks, observability tracing, and verification engines — all operating on a unified BindSpace of 10,000-bit fingerprints. It already exposes 50+ Arrow Flight DoAction handlers purpose-built for crewAI integration.
 
-This prompt specifies how to integrate ladybug-rs into crewAI-rust as a modular provider layer, adding capabilities the original Python crewAI never had — while breaking nothing.
+**The integration is not "wrap ladybug as a storage backend." It is "replace crewAI's stub execution layer with ladybug's fully-realized cognitive substrate."**
 
 ---
 
-## Architecture Principle
+## What Ladybug-rs Actually Provides (Not Speculative — Implemented)
+
+### Orchestration (`src/orchestration/`)
+
+| Component | File | What It Does |
+|-----------|------|-------------|
+| **CrewBridge** | `crew_bridge.rs` | Single coordination point composing ALL subsystems: agents, personas, blackboards, A2A, orchestrator, kernel, filters, guardrails, memory, observability, verification. Methods: `register_agent()`, `submit_task()`, `dispatch_crew()`, `route_task()`, `evaluate_handover()`, `execute_handover()`, `tick_orchestrator()`, `total_awareness()`, `bind_all()` |
+| **MetaOrchestrator** | `meta_orchestrator.rs` | Personality-resonance routing with an affinity graph that learns from collaboration history. Scoring: `compatibility (base) + affinity_boost (history) + task_boost (relevance) + flow_penalty (availability)`. Events: HandoverDecided, FlowTransition, AffinityUpdated, ResonanceRouted, Escalation |
+| **A2AProtocol** | `a2a.rs` | 8 message types (Delegate, Result, Status, Knowledge, Sync, Query, Response, PersonaExchange). XOR superposition in BindSpace channels. `field_resonance()` and `superposition_depth()` for awareness metrics. Channel addressing via prefix `0x0F` |
+| **PersonaRegistry** | `persona.rs` | Full personality modeling: VolitionDTO (curiosity, autonomy, persistence, risk_tolerance, collaboration), CommunicationStyle (formality, verbosity, directness, technical_depth, emotional_tone), FeatureAd (proficiency + CAM opcode). `to_fingerprint()` encodes into 10K-bit HDR. `compatibility()` computes Hamming similarity. `best_for_task()` ranks by volition alignment |
+| **HandoverPolicy** | `handover.rs` | 7-threshold delegation: min_resonance, coherence_floor, max_hold_cycles, flow_momentum_shield, volition_floor, dk_gap_threshold, flow_preserving. FlowState: Flow/Hold/Block/Handover. Dunning-Kruger gap detection. Metacognitive review triggers |
+| **SemanticKernel** | `semantic_kernel.rs` | 20+ kernel operations (Bind, Query, XorBind, XorUnbind, Bundle, Permute, Resonate, Collapse, Deduce, Induce, Abduct, Revise, Correlate, Intervene, Imagine, Escalate, Crystallize, Dissolve, Introspect, ZoneDensity). KernelTruth with NARS truth values. Pearl's 3-rung causal hierarchy (See/Do/Imagine) with auto-escalation. Plugin-extensible ExpansionRegistry |
+| **ThinkingTemplates** | `thinking_template.rs` | 12 base cognitive styles (Analytical, Creative, Systematic, etc.) + 244 custom variants. Fingerprint-encoded for HDR resonance matching. YAML configuration |
+| **BlackboardAgent** | `blackboard_agent.rs` | Per-agent awareness state: reasoning coherence (0.0-1.0), task history (50 records), knowledge fingerprints, flow state, ice-caked commitments. Confidence-vs-coherence gap detection |
+| **KernelExtensions** | `kernel_extensions.rs` | FilterPipeline (12 phases: Pre/PostBind, Query, Resonate, Collapse, Inference, Escalation). KernelGuardrail (content categories, denied topics with fingerprint matching, PII detection, grounding verification). WorkflowNode (Sequential/Parallel/Loop/Conditional DAGs). MemoryBank (episodic/semantic/procedural). ObservabilityManager (sessions/traces/spans). VerificationEngine (density, distance, zone, parity, truth consistency, causal ordering) |
+
+### Arrow Flight Integration (`src/flight/`)
+
+| File | What It Does |
+|------|-------------|
+| **crew_actions.rs** | 50+ DoAction handlers already mapping crewAI operations to Arrow IPC: register agents/templates, submit/dispatch tasks, A2A send/receive, persona attachment/compatibility, handover evaluation/execution, task routing, affinity scoring, kernel introspection, filter/guardrail management, memory store/recall, observability sessions/traces, verification rules |
+| **server.rs** | Arrow Flight gRPC server |
+| **capabilities.rs** | Server capability advertisement |
+
+### Cognitive Substrate
+
+| Component | Files | What It Does |
+|-----------|-------|-------------|
+| **BindSpace** | `storage/bind_space.rs` | 65,536-address O(1) lookup registry (8-bit prefix + 8-bit slot). Reserved prefixes: 0x0C Agents, 0x0D Thinking, 0x0E Blackboards, 0x0F A2A Routing |
+| **GrammarTriangle** | `grammar/triangle.rs` | NSM (65 universal primes) + Causality + Qualia → 10K-bit fingerprints. Language-independent semantic encoding |
+| **NARS Engine** | `nars/` | 4 inference rules (deduction, induction, abduction, revision). Evidence tracking. KernelTruth {frequency, confidence} |
+| **4096 CAM Operations** | `learning/cam_ops.rs` | Content-addressable methods across 16 ranges (Lance, SQL, Cypher, Hamming, NARS, Filesystem, Crystal, NSM, ACT-R, RL, Causal, Qualia, Rung, Meta, Learning, User-defined) |
+| **Fabric** | `fabric/` | Firefly frames (1250-bit packed, 156 bytes), UDP transport, zero-copy IPC, mRNA resonance fields |
+| **Counterfactuals** | `world/counterfactual.rs` | Copy-on-write database forks, diff_forks(), merge with confidence thresholds |
+| **Crystal LM** | `extensions/crystal_lm.rs` | 140M:1 compression for long-term memory compaction |
+
+---
+
+## Architecture Principle (Unchanged)
 
 Every integration is a **new file** behind a `ladybug` feature flag. No existing file is modified except for:
 - `Cargo.toml` — add `ladybug` feature and dependency
@@ -21,581 +59,397 @@ Everything else is additive. If the `ladybug` feature is disabled, crewAI-rust c
 
 ---
 
-## Module 1: Ladybug RAG Provider
+## Integration Layer 1: CrewBridge Adapter (Core — This Replaces crewAI Stubs)
+
+The single most important integration. crewAI-rust's P0 technical debt (LLM unimplemented, Agent executor unimplemented, Crew kickoff unimplemented, Task execute unimplemented) can be resolved by delegating execution to ladybug's `CrewBridge`.
 
 ### Files to Create
 
-**`src/rag/ladybug/mod.rs`**
+**`src/ladybug/bridge.rs`** — The main adapter connecting crewAI's `Crew::kickoff()` to ladybug's `CrewBridge`:
 
 ```rust
-//! Ladybug-rs backed RAG provider.
-//!
-//! Provides vector + Hamming hybrid search over Lance columnar storage.
-//! Three search modes: vector-only, hamming-only, hybrid (vector pre-filter + hamming re-rank).
+use ladybug_rs::orchestration::crew_bridge::{CrewBridge, CrewTask, CrewDispatch, TaskStatus};
+use ladybug_rs::orchestration::meta_orchestrator::MetaOrchestrator;
+use ladybug_rs::orchestration::semantic_kernel::SemanticKernel;
+use ladybug_rs::storage::bind_space::BindSpace;
 
-#[cfg(feature = "ladybug")]
-pub mod client;
-#[cfg(feature = "ladybug")]
-pub mod config;
-```
-
-**`src/rag/ladybug/client.rs`** — Implement `BaseClient` trait:
-
-```rust
-use crate::rag::core::{
-    BaseClient, BaseRecord, CollectionAddParams, CollectionParams,
-    CollectionSearchParams, SearchResult,
-};
-
-pub struct LadybugRagClient {
-    db: Arc<ladybug_rs::Database>,
-    search_mode: SearchMode,
-    nars_scoring: bool,
+pub struct LadybugCrewExecutor {
+    bridge: CrewBridge,
+    space: BindSpace,
+    config: LadybugExecutorConfig,
 }
 
-pub enum SearchMode {
-    /// Standard vector ANN via Lance IVF-PQ indices
-    Vector,
-    /// AVX-512 SIMD Hamming distance on 10K-bit fingerprints
-    Hamming,
-    /// Vector pre-filter (top-N) → Hamming re-rank (final top-K)
-    /// This is the recommended mode for production use.
-    Hybrid { pre_filter_factor: usize },
-}
-```
-
-Implement all `BaseClient` methods. The key innovation is `search()`:
-
-1. **Vector mode**: Delegate to Lance `nearest_to()` with IVF-PQ
-2. **Hamming mode**: Load fingerprints, SIMD compare, return top-K
-3. **Hybrid mode**: Vector search for `limit * pre_filter_factor` results, then Hamming re-rank to `limit`
-
-If `nars_scoring` is enabled, annotate each result with NARS truth values `{frequency, confidence}` in the metadata field.
-
-**`src/rag/ladybug/config.rs`** — Configuration:
-
-```rust
-pub struct LadybugRagConfig {
-    pub db_path: String,
-    pub search_mode: SearchMode,
-    pub nars_scoring: bool,
-    pub embedding_mode: EmbeddingMode,
-    pub collection_prefix: Option<String>,
+pub struct LadybugExecutorConfig {
+    pub handover_policy: Option<HandoverPolicy>,
+    pub enable_guardrails: bool,
+    pub enable_observability: bool,
+    pub enable_verification: bool,
+    pub memory_kinds: Vec<MemoryKind>,
+    pub thinking_templates_yaml: Option<String>,
 }
 
-pub enum EmbeddingMode {
-    /// Use ladybug GrammarTriangle (local, no API calls)
-    GrammarTriangle,
-    /// Use external Jina API (deprecated path)
-    Jina { api_key: String },
-    /// Dual: GrammarTriangle fingerprint + dense vector
-    Dual,
+impl LadybugCrewExecutor {
+    pub fn new(config: LadybugExecutorConfig) -> Self;
+
+    /// Convert a crewAI Crew into a CrewDispatch and execute via CrewBridge.
+    pub fn execute_crew(&mut self, crew: &Crew) -> Result<CrewOutput, CrewAIError> {
+        // 1. Register each crewAI Agent as a ladybug AgentCard
+        // 2. Attach Persona from agent's role/goal/backstory
+        // 3. Register thinking templates if provided
+        // 4. Convert crewAI Tasks → CrewTasks with dependency chain
+        // 5. dispatch_crew() through CrewBridge
+        // 6. Run tick_orchestrator() loop with handover evaluation
+        // 7. Collect results, map back to crewAI CrewOutput
+    }
+
+    /// Access the semantic kernel for direct operations.
+    pub fn kernel(&self) -> &SemanticKernel;
+
+    /// Access the BindSpace for fingerprint operations.
+    pub fn space(&self) -> &BindSpace;
+
+    /// Get crew-wide awareness metrics.
+    pub fn awareness(&self) -> f32;
 }
 ```
 
-### Registration
+### What This Enables
 
-Add to `src/rag/factory.rs`:
-
-```rust
-#[cfg(feature = "ladybug")]
-SupportedProvider::Ladybug => {
-    let config = /* extract LadybugRagConfig from base config */;
-    Ok(Box::new(ladybug::client::LadybugRagClient::new(config)?))
-}
-```
-
-Add `Ladybug` variant to `SupportedProvider` enum (feature-gated).
+| crewAI P0 Stub | Resolution via CrewBridge |
+|-----------------|--------------------------|
+| `Crew::kickoff()` unimplemented | `bridge.dispatch_crew()` + `tick_orchestrator()` loop |
+| `Agent::execute_task()` unimplemented | `bridge.submit_task()` routes to best agent via persona+affinity scoring |
+| `Task::execute()` unimplemented | `CrewTask` lifecycle: Queued → Assigned → InProgress → Completed/Failed/Delegated |
+| Static task delegation | `bridge.route_task()` uses Hamming similarity between task fingerprint and agent capability fingerprints |
+| No inter-agent communication | `bridge.send_a2a()` / `receive_a2a()` with 8 message types over XOR-composed channels |
 
 ---
 
-## Module 2: Ladybug Embedding Provider
+## Integration Layer 2: Persona-Enriched Agents
 
-### Files to Create
+crewAI agents have `role`, `goal`, `backstory`. Ladybug personas add 5-axis volition, communication style, personality traits, feature proficiencies, and fingerprint-based compatibility.
 
-**`src/rag/embeddings/providers/ladybug/mod.rs`**
-
-Implement `BaseEmbeddingsProvider` and `EmbeddingFunctionTrait`:
+**`src/ladybug/persona_adapter.rs`**
 
 ```rust
-pub struct LadybugEmbeddingProvider {
-    output_mode: EmbedderOutputMode,
+/// Build a ladybug Persona from a crewAI Agent.
+///
+/// Maps crewAI's string-based agent definition to ladybug's
+/// multi-dimensional persona model. The role/goal/backstory are analyzed
+/// via GrammarTriangle to infer volition dimensions and communication style.
+pub fn agent_to_persona(agent: &Agent) -> Persona {
+    // 1. Parse role → infer technical_depth, formality, directness
+    // 2. Parse goal → infer curiosity, autonomy, persistence, risk_tolerance
+    // 3. Parse backstory → infer collaboration, affinities, aversions
+    // 4. Convert agent tools → FeatureAd entries with CAM opcodes
+    // 5. Build fingerprint for HDR compatibility matching
 }
 
-pub enum EmbedderOutputMode {
-    /// Project NSM 65-dim weights to 1024-dim dense vector
-    DenseVector,
-    /// Return 10K-bit fingerprint as binary f32 vector (each element 0.0 or 1.0)
-    BinaryFingerprint,
-    /// Both dense + fingerprint (for hybrid search)
-    Dual,
+/// Find the best agent for a task using persona fingerprint matching.
+///
+/// This replaces crewAI's static delegation with semantic routing:
+/// - Fingerprint the task description via GrammarTriangle
+/// - Hamming-compare against all registered agent persona fingerprints
+/// - Score by: volition alignment + feature match + affinity history
+pub fn route_task_to_agent(
+    task: &Task,
+    personas: &PersonaRegistry,
+    orchestrator: &MetaOrchestrator,
+) -> Option<(u8, f32)>;
+```
+
+---
+
+## Integration Layer 3: Semantic Memory (Replaces Stub Memory Backends)
+
+crewAI-rust has `Storage` trait with stub implementations for RAG, Mem0, and SQLite. Ladybug provides a unified memory system with episodic/semantic/procedural types, blackboard awareness, and ice-caked committed facts.
+
+**`src/memory/storage/ladybug_storage.rs`**
+
+```rust
+pub struct LadybugMemoryStorage {
+    bridge: Arc<RwLock<CrewBridge>>,
+    agent_slot: u8,
 }
 
-impl BaseEmbeddingsProvider for LadybugEmbeddingProvider {
-    fn provider_name(&self) -> &str { "ladybug-grammar-triangle" }
-
-    fn build_embedding_function(&self) -> Result<Box<dyn EmbeddingFunctionTrait>, anyhow::Error> {
-        Ok(Box::new(GrammarTriangleFunction::new(self.output_mode)))
+impl Storage for LadybugMemoryStorage {
+    fn save(&self, value: &str, metadata: &HashMap<String, Value>) -> Result<()> {
+        // 1. Determine MemoryKind from metadata (episodic/semantic/procedural)
+        // 2. Store via bridge.memory (MemoryBank)
+        // 3. Record in agent's blackboard for awareness
     }
 
-    fn config(&self) -> Value {
-        json!({
-            "provider": "ladybug-grammar-triangle",
-            "output_mode": format!("{:?}", self.output_mode),
-            "dimensions": match self.output_mode {
-                EmbedderOutputMode::DenseVector => 1024,
-                EmbedderOutputMode::BinaryFingerprint => 10000,
-                EmbedderOutputMode::Dual => 11024,
-            }
-        })
+    fn search(&self, query: &str, limit: usize, score_threshold: f64) -> Result<Vec<Value>> {
+        // 1. Check blackboard ice-caked layers (committed facts) first
+        // 2. Resonate across MemoryBank via kernel.resonate()
+        // 3. NARS-score results for truth values
+        // 4. Merge ice-caked facts (boosted) with search results
     }
 }
 ```
 
-The `GrammarTriangleFunction` wraps ladybug's `GrammarTriangle::analyze()`:
-- Accepts text input
-- Runs NSM + Causality + Qualia analysis
-- Outputs dense vector, fingerprint, or both depending on mode
+---
 
-Register in `src/rag/embeddings/providers/mod.rs` provider registry:
+## Integration Layer 4: Guardrailed Execution
+
+crewAI-rust has a `Guardrail` type but no implementation. Ladybug has a full `KernelGuardrail` with content filtering, denied topic detection (via fingerprint similarity), PII detection, and grounding verification.
+
+**`src/ladybug/guardrail_adapter.rs`**
+
 ```rust
-#[cfg(feature = "ladybug")]
-registry.insert("ladybug-grammar-triangle", "rag::embeddings::providers::ladybug");
+pub struct LadybugGuardrail {
+    guardrail: KernelGuardrail,
+    kernel: Arc<SemanticKernel>,
+    space: Arc<RwLock<BindSpace>>,
+}
+
+impl LadybugGuardrail {
+    /// Check task output against content safety, denied topics, PII,
+    /// and factual grounding (verifying claims against stored knowledge).
+    pub fn validate(&self, output: &str) -> GuardrailResult;
+
+    /// Add a denied topic by description — automatically fingerprinted
+    /// for fast Hamming-distance matching at validation time.
+    pub fn deny_topic(&mut self, name: &str, description: &str, threshold: f32);
+}
 ```
 
 ---
 
-## Module 3: MCP Transports (Arrow Flight + Hamming UDP)
+## Integration Layer 5: Observable Execution
 
-### Files to Create
+crewAI-rust has telemetry stubs. Ladybug has `ObservabilityManager` with sessions, traces, spans, and grounding metadata.
 
-**`src/mcp/transports/arrow_flight.rs`** — Arrow Flight gRPC transport:
-
-```rust
-pub struct ArrowFlightTransport {
-    endpoint: String,
-    client: Option</* arrow-flight FlightClient */>,
-    connected: bool,
-    timeout: Duration,
-}
-
-impl BaseTransport for ArrowFlightTransport {
-    fn transport_type(&self) -> TransportType { TransportType::ArrowFlight }
-    // ... connect/disconnect/server_identifier
-}
-```
-
-Add `ArrowFlight` variant to `TransportType` enum (feature-gated).
-
-MCP tool calls map to Arrow Flight `DoAction`:
-- `list_tools` → `DoAction("list_tools")` returns `RecordBatch` with tool definitions
-- `call_tool` → `DoAction(tool_name)` with arguments serialized in Flight descriptor
-
-Tool results that are tabular (search results, data queries) arrive as zero-copy `RecordBatch` — converted to JSON only at the final agent prompt boundary.
-
-**`src/mcp/transports/hamming_udp.rs`** — Ultra-low-latency UDP transport:
+**`src/ladybug/observability_adapter.rs`**
 
 ```rust
-pub struct HammingUdpTransport {
-    endpoint: String,
-    socket: Option<UdpSocket>,
-    lane: u8,
-    connected: bool,
-    fallback: Option<Box<dyn BaseTransport>>,
+pub struct LadybugObservability {
+    manager: Arc<RwLock<ObservabilityManager>>,
 }
 
-impl BaseTransport for HammingUdpTransport {
-    fn transport_type(&self) -> TransportType { TransportType::HammingUdp }
-    // ...
-}
-```
+impl LadybugObservability {
+    /// Create a session for a crew execution.
+    pub fn start_session(&mut self, crew_id: &str) -> String;
 
-Add `HammingUdp` variant to `TransportType` enum.
+    /// Create a trace for a task within a session.
+    pub fn start_trace(&mut self, session_id: &str, task_id: &str) -> String;
 
-Tool calls are encoded as Firefly instruction frames (1250-bit packed):
-- 8-bit sender + 8-bit receiver + 12-bit operation code + 1222-bit payload
-- Total: 156 bytes per message
-- Sub-millisecond latency on local network
+    /// Record a span (agent action, tool call, handover, etc).
+    pub fn record_span(&mut self, trace_id: &str, operation: &str, duration_ns: u64);
 
-Automatic fallback to HTTP on delivery failure (no ACK within 5ms configurable timeout).
+    /// Annotate a trace with grounding metadata.
+    pub fn add_grounding(&mut self, trace_id: &str, grounding: GroundingMetadata);
 
-**`src/mcp/config.rs`** — Add new config variants (feature-gated):
-
-```rust
-#[cfg(feature = "ladybug")]
-pub struct MCPServerArrowFlight {
-    pub endpoint: String,
-    pub tls: bool,
-    pub auth_token: Option<String>,
-    pub tool_filter: Option<ArcToolFilter>,
-    pub cache_tools_list: bool,
-}
-
-#[cfg(feature = "ladybug")]
-pub struct MCPServerHammingUdp {
-    pub endpoint: String,
-    pub lane: u8,
-    pub fallback_http: Option<String>,
-    pub ack_timeout_ms: u64,
-    pub tool_filter: Option<ArcToolFilter>,
-    pub cache_tools_list: bool,
+    /// Export traces as OpenTelemetry-compatible spans.
+    pub fn export_otel(&self) -> Vec<OtelSpan>;
 }
 ```
-
-Add `ArrowFlight(MCPServerArrowFlight)` and `HammingUdp(MCPServerHammingUdp)` variants to `MCPServerConfig` enum.
 
 ---
 
-## Module 4: xAI / Grok LLM Provider
+## Integration Layer 6: Workflow DAGs
 
-### Files to Create
+crewAI has sequential and hierarchical process types. Ladybug has full `WorkflowNode` DAGs with Sequential, Parallel, Loop, and Conditional execution — all operating on BindSpace without requiring LLM invocation for control flow.
+
+**`src/ladybug/workflow_adapter.rs`**
+
+```rust
+pub struct LadybugWorkflowExecutor {
+    kernel: Arc<SemanticKernel>,
+    space: Arc<RwLock<BindSpace>>,
+}
+
+impl LadybugWorkflowExecutor {
+    /// Convert a crewAI sequential/hierarchical process into a WorkflowNode DAG.
+    pub fn from_crew_process(crew: &Crew) -> WorkflowNode;
+
+    /// Execute a workflow, returning per-step results.
+    pub fn execute(&mut self, workflow: &WorkflowNode) -> WorkflowResult;
+
+    /// Build a conditional workflow: if agent confidence > threshold, proceed;
+    /// else delegate to another agent or escalate.
+    pub fn conditional_delegation(
+        task: &CrewTask,
+        condition_addr: Addr,
+        branches: Vec<(f32, WorkflowNode)>,
+    ) -> WorkflowNode;
+}
+```
+
+---
+
+## Integration Layer 7: RAG + Embeddings (Same as v1 but uses existing infrastructure)
+
+**`src/rag/ladybug/client.rs`** — `BaseClient` backed by ladybug's `Database`:
+- Vector mode: Lance `nearest_to()` with IVF-PQ
+- Hamming mode: AVX-512 SIMD on 10K-bit fingerprints (400M ops/sec)
+- Hybrid mode: Vector pre-filter → Hamming re-rank
+
+**`src/rag/embeddings/providers/ladybug/mod.rs`** — `BaseEmbeddingsProvider` backed by `GrammarTriangle`:
+- DenseVector (1024-dim projected from 65 NSM weights)
+- BinaryFingerprint (10K-bit)
+- Dual (both, for hybrid search)
+
+---
+
+## Integration Layer 8: MCP Transports
+
+**`src/mcp/transports/arrow_flight.rs`** — Arrow Flight transport:
+- Maps MCP operations to the 50+ DoAction handlers already implemented in ladybug's `crew_actions.rs`
+- Zero-copy `RecordBatch` for tabular tool results
+
+**`src/mcp/transports/hamming_udp.rs`** — Firefly frame transport:
+- 1250-bit packed frames (156 bytes)
+- Sub-millisecond latency for same-network agent communication
+- Automatic HTTP fallback on delivery failure
+
+---
+
+## Integration Layer 9: A2A with Semantic Discovery
+
+crewAI-rust has A2A stubs with `AgentCard`. Ladybug has a full `AgentCard` + `A2AProtocol` with XOR-composed channels and persona exchange.
+
+**`src/a2a/ladybug_card.rs`**
+
+```rust
+pub struct LadybugAgentCard {
+    base_config: A2AServerConfig,
+    agent_card: ladybug_rs::orchestration::agent_card::AgentCard,
+    persona: Persona,
+}
+
+impl LadybugAgentCard {
+    /// Semantic capability query: "can you help with X?"
+    /// Fingerprints the question, Hamming-matches against agent capabilities.
+    pub fn discover_for_task(&self, task_description: &str) -> Vec<DiscoveredCapability>;
+
+    /// Exchange persona profiles between agents for adaptive communication.
+    pub fn exchange_persona(&self, target_slot: u8) -> PersonaExchange;
+}
+```
+
+---
+
+## Integration Layer 10: Verification Engine
+
+No equivalent in crewAI. Ladybug provides deterministic verification rules that validate fingerprint operations without LLM invocation.
+
+**`src/ladybug/verification_adapter.rs`**
+
+```rust
+pub struct LadybugVerifier {
+    engine: VerificationEngine,
+}
+
+impl LadybugVerifier {
+    /// Verify that an agent's output meets structural constraints.
+    pub fn verify_output(&self, output: &str, rules: &[VerificationRule]) -> Vec<VerificationResult>;
+
+    /// Built-in rules:
+    /// - MinimumDensity: output fingerprint must have min popcount
+    /// - TruthConsistency: NARS truth values don't contradict
+    /// - CausalOrdering: temporal dependencies respected
+    /// - ZoneConstraint: data stays in allowed BindSpace zones
+    pub fn default_rules() -> Vec<VerificationRule>;
+}
+```
+
+---
+
+## Integration Layer 11: Counterfactual Exploration
+
+**`src/ladybug/counterfactual.rs`**
+
+```rust
+pub struct CounterfactualExplorer {
+    db: Arc<Database>,
+}
+
+impl CounterfactualExplorer {
+    /// Fork the world state to explore a hypothesis.
+    pub fn fork(&self, agent_id: &str, hypothesis: &str) -> Result<ForkHandle>;
+
+    /// Compare outcomes between two forks.
+    pub fn diff(&self, a: &ForkHandle, b: &ForkHandle) -> ForkDiff;
+
+    /// Merge a fork back if the hypothesis held (confidence-gated).
+    pub fn merge(&self, fork: ForkHandle, min_confidence: f64) -> Result<()>;
+}
+```
+
+---
+
+## What Was Previously "Nice-to-Have" but Is Now Implemented
+
+The v1 prompt listed these as speculative features. They already exist in ladybug-rs:
+
+| v1 "Nice-to-Have" | Ladybug Implementation |
+|--------------------|----------------------|
+| N4. Semantic Agent Routing | `MetaOrchestrator::route_task()` + `PersonaRegistry::best_for_task()` |
+| N7. Resonance-Based Knowledge Propagation | `fabric/mrna.rs` mRNA resonance fields |
+| N3. Live Reasoning Trace | `ObservabilityManager` with sessions/traces/spans |
+| N8. Confidence-Gated Tool Execution | `KernelGuardrail` + `KernelTruth` confidence checks |
+| Workflow DAGs | `WorkflowNode` (Sequential/Parallel/Loop/Conditional) |
+| Filter Pipeline | `FilterPipeline` with 12 phases |
+| Content Guardrails | `KernelGuardrail` with fingerprint-matched denied topics |
+| Agent Personality | `PersonaRegistry` with 5-axis volition + communication style |
+| Affinity Learning | `AffinityEdge` with 60% static + 40% dynamic blending |
+| Dunning-Kruger Detection | `HandoverPolicy::dk_gap_threshold` |
+
+---
+
+## Remaining Nice-to-Have (Genuinely Not Yet Implemented)
+
+### N1. Adaptive Search Mode Selection
+
+The RAG adapter automatically selects vector/hamming/hybrid per query based on query length, type detection, and historical performance tracking.
+
+### N2. Agent Memory Consolidation
+
+Post-crew-execution: identify frequently accessed memories, NARS revision on conflicts, consolidate into shared "crew memory", crystal-compress old per-agent memories.
+
+### N3. Multi-Lingual Agent Crews
+
+GrammarTriangle's 65 NSM universal primitives produce language-independent fingerprints. Agents operating in different languages produce comparable semantic representations. Add German, Spanish, Japanese translations.
+
+### N4. Crew Execution Replay
+
+Lance versioning + blackboard history → step-through replay of any crew execution with fork-and-try-alternatives at any decision point.
+
+### N5. Crystal LM Memory Compaction
+
+Use `extensions/crystal_lm.rs` (140M:1 compression) for long-term agent memory. Decompress on demand during search.
+
+---
+
+## Module 12: xAI / Grok LLM Provider
+
+(Unchanged from v1 — independent of ladybug integration)
 
 **`src/llms/providers/xai/mod.rs`**
 
 ```rust
-//! xAI Grok LLM provider.
-//!
-//! Supports Grok-2, Grok-3, and future models via the xAI API.
-//! API is OpenAI-compatible with additional reasoning capabilities.
-
 pub struct XaiCompletion {
     state: BaseLLMState,
     api_key: String,
-    base_url: String,       // default: "https://api.x.ai/v1"
-    reasoning_effort: Option<String>, // "low", "medium", "high"
-    search_enabled: bool,    // Grok's real-time web search
+    base_url: String,
+    reasoning_effort: Option<String>,
+    search_enabled: bool,
 }
 
 impl BaseLLM for XaiCompletion {
-    fn model(&self) -> &str { &self.state.model }
     fn provider(&self) -> &str { "xai" }
     fn supports_function_calling(&self) -> bool { true }
     fn supports_multimodal(&self) -> bool { true }
-    fn get_context_window_size(&self) -> usize { 131072 } // Grok-2: 128K
-
-    fn call(&self, messages, tools, available_functions) -> Result<Value, _> {
-        // POST to xAI API (OpenAI-compatible format)
-        // Handle tool_choice, response_format
-        // Parse xAI-specific fields (search_results, reasoning_content)
-    }
-
-    async fn acall(&self, messages, tools, available_functions) -> Result<Value, _> {
-        // Async version using reqwest
-    }
-}
-```
-
-**Key xAI-specific features to expose**:
-
-1. **Reasoning effort**: `reasoning_effort` parameter controls how much "thinking" Grok does
-2. **Live search**: `search_enabled` lets Grok search the web in real-time
-3. **Streaming**: Support `stream: true` with SSE parsing
-4. **Tool use**: OpenAI-compatible function calling format
-
-**Authentication**: `XAI_API_KEY` environment variable or explicit `api_key` parameter.
-
-Register in `src/llms/providers/mod.rs`:
-```rust
-#[cfg(feature = "xai")]
-pub mod xai;
-```
-
----
-
-## Module 5: Ladybug Memory Backend
-
-### Files to Create
-
-**`src/memory/storage/ladybug_storage.rs`**
-
-Implement `Storage` trait backed by ladybug's Database + Blackboard:
-
-```rust
-pub struct LadybugStorage {
-    db: Arc<ladybug_rs::Database>,
-    blackboard: Arc<RwLock<ladybug_rs::Blackboard>>,
-    collection_name: String,
-    agent_id: String,
-    search_mode: SearchMode,
-}
-
-impl Storage for LadybugStorage {
-    fn save(&self, value: &str, metadata: &HashMap<String, Value>) -> Result<(), anyhow::Error> {
-        // 1. Encode value via GrammarTriangle → fingerprint + embedding
-        // 2. Store in Lance nodes table
-        // 3. Record in blackboard decision history
-    }
-
-    fn search(&self, query: &str, limit: usize, score_threshold: f64) -> Result<Vec<Value>, anyhow::Error> {
-        // 1. Check blackboard frozen layers (ice-caked commitments) first
-        // 2. Hybrid search on Lance table
-        // 3. NARS score results
-        // 4. Merge ice-caked facts (boosted) with search results
-    }
-
-    fn reset(&self) -> Result<(), anyhow::Error> {
-        // Clear collection + reset blackboard for this agent
-    }
-}
-```
-
-**The ice-cake boost**: When an agent or crew explicitly commits a fact (marks it as decided), it becomes an ice-caked layer in the blackboard. On subsequent searches, ice-caked facts matching the query get a 2x score boost and are always included in results regardless of threshold. This gives agents "institutional memory" — committed decisions persist with high priority.
-
----
-
-## Module 6: Shared Awareness Between Agents
-
-### Files to Create
-
-**`src/memory/storage/shared_blackboard.rs`**
-
-A specialized storage backend that enables cross-agent awareness:
-
-```rust
-pub struct SharedBlackboardStorage {
-    blackboard: Arc<RwLock<ladybug_rs::Blackboard>>,
-    agent_id: String,
-}
-
-impl SharedBlackboardStorage {
-    /// Post an observation visible to all agents in the crew.
-    pub fn post_observation(&self, content: Value) -> Result<(), anyhow::Error>;
-
-    /// Read observations from other agents since the given timestamp.
-    pub fn read_observations(&self, since: Option<DateTime<Utc>>) -> Result<Vec<Value>, anyhow::Error>;
-
-    /// Get the awareness state: who's working on what.
-    pub fn awareness_state(&self) -> Result<SharedAwarenessState, anyhow::Error>;
-}
-```
-
-This is NOT a replacement for `Storage` — it's an additional capability. Agents get both their private `LadybugStorage` and a shared `SharedBlackboardStorage`. The crew executor wires them together.
-
----
-
-## Module 7: A2A Agent Card Extensions
-
-### Files to Create
-
-**`src/a2a/ladybug_card.rs`**
-
-Extend A2A with semantic capability discovery:
-
-```rust
-pub struct LadybugAgentCard {
-    pub base_config: A2AServerConfig,
-    pub cam_capabilities: Vec<CamCapability>,
-    pub db: Arc<ladybug_rs::Database>,
-}
-
-pub struct CamCapability {
-    pub id: u16,
-    pub name: String,
-    pub description: String,
-    pub fingerprint: Vec<u8>, // 10K-bit fingerprint of this capability
-    pub input_schema: Option<Value>,
-    pub output_schema: Option<Value>,
-}
-
-impl LadybugAgentCard {
-    /// Build an agent card from a crewAI Agent, automatically discovering
-    /// capabilities from the agent's tools and knowledge.
-    pub fn from_agent(agent: &Agent, db: Arc<Database>) -> Self;
-
-    /// Semantic capability query: "what can this agent do for task X?"
-    pub fn discover_capabilities(&self, task_description: &str) -> Vec<DiscoveredCapability>;
-
-    /// Standard A2A agent card JSON (with extended capabilities section).
-    pub fn to_json(&self) -> Value;
-}
-
-pub struct DiscoveredCapability {
-    pub capability: CamCapability,
-    pub relevance_score: f64,        // Hamming similarity to task
-    pub nars_confidence: f64,        // How confident we are this capability applies
-    pub estimated_complexity: String, // "simple", "moderate", "complex"
+    fn get_context_window_size(&self) -> usize { 131072 }
 }
 ```
 
 ---
 
-## Module 8: German Translations
+## Module 13: German Translations
 
-### Files to Create
-
-**`src/translations/de.json`**
-
-Translate the entire `en.json` structure to German. The JSON structure must match exactly — same keys, same nesting, only values translated.
-
-Key sections:
-- `hierarchical_manager_agent` — Agent role descriptions, goals, backstory
-- `slices` — Prompt templates (role_playing, tools, task descriptions, observations)
-- `errors` — Error messages
-
-Example entries:
-```json
-{
-  "hierarchical_manager_agent": {
-    "role": "Crew-Manager",
-    "goal": "Verwalte die Crew und delegiere Aufgaben an die richtigen Agenten...",
-    "backstory": "Du bist ein erfahrener Manager, der ein Team von Agenten koordiniert..."
-  },
-  "slices": {
-    "observation": "\nBeobachtung",
-    "task": "\nAktuelle Aufgabe: {task}",
-    "tools": "\nVerfuegbare Werkzeuge: {tools}",
-    "role_playing": "Du bist {role}.\n{backstory}\n\nDein persoenliches Ziel: {goal}"
-  },
-  "errors": {
-    "tool_usage_error": "Fehler bei der Werkzeugverwendung: {error}",
-    "task_execution_error": "Fehler bei der Aufgabenausfuehrung: {error}"
-  }
-}
-```
-
-**Note**: Use ASCII-safe German (ae/oe/ue instead of umlauts) in code-facing strings to avoid encoding issues in prompts. Display-facing strings can use proper umlauts.
-
-**`src/translations/mod.rs`** — Update to support language selection:
-
-```rust
-pub const EN_JSON: &str = include_str!("en.json");
-pub const DE_JSON: &str = include_str!("de.json");
-
-impl Translations {
-    pub fn load(language: &str) -> Self {
-        match language {
-            "de" | "german" => Self::from_json(DE_JSON).unwrap_or_else(|_| Self::load_default()),
-            _ => Self::load_default(),
-        }
-    }
-}
-```
-
----
-
-## Module 9: Structured Recall for RAG
-
-### Files to Create
-
-**`src/rag/scoring/mod.rs`**
-
-```rust
-//! Result scoring and re-ranking for RAG pipelines.
-//!
-//! Provides NARS-based truth value scoring, cross-reference verification,
-//! and temporal decay for search results.
-
-pub struct StructuredRecallScorer {
-    /// Enable NARS truth value computation
-    pub nars_enabled: bool,
-    /// Enable cross-reference verification (check if multiple sources agree)
-    pub cross_reference: bool,
-    /// Temporal decay half-life in days (older results score lower)
-    pub temporal_decay_days: Option<f64>,
-    /// Minimum confidence to include in results
-    pub min_confidence: f64,
-}
-
-impl StructuredRecallScorer {
-    pub fn score(&self, results: Vec<SearchResult>, context: &RecallContext) -> Vec<ScoredResult>;
-}
-
-pub struct RecallContext {
-    pub query: String,
-    pub agent_role: Option<String>,
-    pub task_type: Option<String>,
-    pub prior_queries: Vec<String>,
-    pub known_facts: Vec<String>,
-}
-
-pub struct ScoredResult {
-    pub result: SearchResult,
-    pub truth_value: TruthValue,
-    pub cross_references: usize,
-    pub temporal_freshness: f64,
-    pub composite_score: f64,
-}
-
-pub struct TruthValue {
-    pub frequency: f64,   // 0.0-1.0: how often is this true across sources
-    pub confidence: f64,  // 0.0-1.0: how much evidence do we have
-    pub expectation: f64, // frequency * confidence + 0.5 * (1 - confidence)
-}
-```
-
-This works with ANY RAG backend (ChromaDB, Qdrant, Ladybug) — it's a post-processing layer that re-scores results before they reach the agent.
-
----
-
-## Module 10: RAG Provider Management
-
-### Files to Create
-
-**`src/rag/manager.rs`**
-
-```rust
-//! RAG provider management: hot-swap providers, multi-provider search,
-//! provider health monitoring, and automatic failover.
-
-pub struct RagManager {
-    providers: HashMap<String, Box<dyn BaseClient>>,
-    primary: String,
-    fallback_chain: Vec<String>,
-    health_status: HashMap<String, ProviderHealth>,
-}
-
-pub struct ProviderHealth {
-    pub last_check: DateTime<Utc>,
-    pub is_healthy: bool,
-    pub avg_latency_ms: f64,
-    pub error_rate: f64,
-    pub total_queries: u64,
-}
-
-impl RagManager {
-    /// Register a new provider.
-    pub fn register(&mut self, name: &str, client: Box<dyn BaseClient>);
-
-    /// Set the primary provider and fallback chain.
-    pub fn set_primary(&mut self, name: &str, fallbacks: Vec<String>);
-
-    /// Search across providers with automatic failover.
-    pub fn search(&self, params: &CollectionSearchParams) -> Result<Vec<SearchResult>, anyhow::Error>;
-
-    /// Multi-provider search: query all providers and merge results.
-    /// De-duplicates by content hash, keeps highest score per unique result.
-    pub fn multi_search(&self, params: &CollectionSearchParams) -> Result<Vec<SearchResult>, anyhow::Error>;
-
-    /// Health check all providers.
-    pub fn health_check(&mut self) -> HashMap<String, ProviderHealth>;
-
-    /// Hot-swap a provider without downtime.
-    pub fn swap(&mut self, name: &str, new_client: Box<dyn BaseClient>);
-}
-```
-
-This gives crewAI the ability to run multiple RAG backends simultaneously — e.g., ChromaDB for general knowledge + Ladybug for agent-specific memory — and merge results.
-
----
-
-## Module 11: Ladybug-Specific Events
-
-### Files to Create
-
-**`src/events/types/ladybug_events.rs`**
-
-```rust
-pub struct HammingSearchEvent { /* query, result_count, avg_hamming_distance, latency_us */ }
-pub struct NarsInferenceEvent { /* query, truth_value, evidence_count, inference_type */ }
-pub struct BlackboardCommitEvent { /* agent_id, commitment, layer_name, vote_result */ }
-pub struct FingerprintGeneratedEvent { /* text_preview, fingerprint_hash, nsm_activations */ }
-pub struct ArrowFlightCallEvent { /* action, endpoint, bytes_transferred, latency_us */ }
-pub struct AgentAwarenessEvent { /* agent_id, observation_type, content_preview */ }
-pub struct CounterfactualForkEvent { /* agent_id, hypothesis, fork_id */ }
-pub struct CounterfactualMergeEvent { /* fork_id, merge_strategy, divergence_score */ }
-```
-
-All implement `BaseEvent`. Emitted through the existing event bus singleton.
+(Unchanged from v1 — independent of ladybug integration)
 
 ---
 
@@ -605,7 +459,7 @@ All implement `BaseEvent`. Emitted through the existing event bus singleton.
 [features]
 default = []
 ladybug = ["dep:ladybug-rs"]
-xai = []  # No extra deps, just reqwest (already a dep)
+xai = []
 full = ["ladybug", "xai"]
 
 [dependencies]
@@ -621,111 +475,64 @@ ladybug-rs = { git = "https://github.com/AdaWorldAPI/ladybug-rs", optional = tru
 pub mod ladybug;
 ```
 
-**`src/ladybug/mod.rs`** — Re-export convenience module:
+**`src/ladybug/mod.rs`**:
 
 ```rust
 //! Ladybug-rs integration for crewAI.
 //!
 //! Enable with `features = ["ladybug"]` in Cargo.toml.
+//!
+//! This replaces crewAI's stub execution layer with ladybug's cognitive
+//! substrate: CrewBridge orchestration, persona-based routing, semantic
+//! kernel operations, guardrails, observability, and verification.
 
+pub mod bridge;
+pub mod persona_adapter;
+pub mod guardrail_adapter;
+pub mod observability_adapter;
+pub mod workflow_adapter;
+pub mod verification_adapter;
+pub mod counterfactual;
+
+pub use bridge::{LadybugCrewExecutor, LadybugExecutorConfig};
+pub use persona_adapter::{agent_to_persona, route_task_to_agent};
+pub use guardrail_adapter::LadybugGuardrail;
+pub use observability_adapter::LadybugObservability;
+pub use workflow_adapter::LadybugWorkflowExecutor;
+pub use verification_adapter::LadybugVerifier;
+pub use counterfactual::CounterfactualExplorer;
+
+// Re-export storage/transport adapters
 pub use crate::rag::ladybug::client::LadybugRagClient;
 pub use crate::rag::ladybug::config::{LadybugRagConfig, SearchMode, EmbeddingMode};
 pub use crate::rag::embeddings::providers::ladybug::LadybugEmbeddingProvider;
-pub use crate::memory::storage::ladybug_storage::LadybugStorage;
-pub use crate::memory::storage::shared_blackboard::SharedBlackboardStorage;
+pub use crate::memory::storage::ladybug_storage::LadybugMemoryStorage;
 pub use crate::mcp::transports::arrow_flight::ArrowFlightTransport;
 pub use crate::mcp::transports::hamming_udp::HammingUdpTransport;
 pub use crate::a2a::ladybug_card::LadybugAgentCard;
-pub use crate::rag::scoring::StructuredRecallScorer;
-pub use crate::rag::manager::RagManager;
 ```
-
----
-
-## Nice-to-Have Features (Not Yet Implemented Anywhere)
-
-These don't exist in either codebase yet. They represent what would make this integration extraordinary:
-
-### N1. Adaptive Search Mode Selection
-
-The `RagManager` automatically selects the best search mode (vector/hamming/hybrid) per query based on:
-- Query length (short queries → hamming; long queries → vector)
-- Query type detection (factual → hamming; semantic → vector; exploratory → hybrid)
-- Historical performance (track which mode produces results the agent actually uses)
-
-### N2. Agent Memory Consolidation
-
-When a crew finishes, the `LadybugStorage` automatically:
-1. Identifies frequently accessed memories across all agents
-2. Runs NARS revision on conflicting memories
-3. Consolidates into a shared "crew memory" collection
-4. Crystal-compresses old per-agent memories
-
-This mimics how human teams build institutional knowledge after a project.
-
-### N3. Live Reasoning Trace
-
-Every NARS inference step is emitted as a `NarsInferenceEvent` with full trace:
-- Input premises
-- Inference rule applied (deduction/induction/abduction)
-- Resulting truth value
-- Confidence change
-
-Agents can inspect their own reasoning: "why do I believe this fact?"
-
-### N4. Semantic Agent Routing
-
-Instead of static task delegation, use Hamming similarity between task fingerprints and agent capability fingerprints to automatically select the best agent for a task. The crew executor fingerprints the task description, compares against all registered `LadybugAgentCard` capabilities, and routes to the best match.
-
-### N5. Zero-Copy Agent Pipelines
-
-When two agents in the same process pass data via Arrow Flight transport, use shared memory instead of network I/O. The `RecordBatch` is passed by `Arc` reference — true zero-copy, zero-serialization agent communication.
-
-### N6. Temporal Knowledge Graphs
-
-Use ladybug's edge types with timestamps to build knowledge graphs that evolve over time. Agents can query "what was true at time T?" using Lance's version-based time travel. Combined with counterfactual forks, this enables: "what would have happened if we knew X at time T?"
-
-### N7. Resonance-Based Knowledge Propagation
-
-When agent A discovers a fact that resonates (Hamming similarity > 0.85) with agent B's current query context, automatically surface it to B without explicit communication. This is passive inter-agent learning — agents benefit from each other's discoveries in real-time.
-
-### N8. Confidence-Gated Tool Execution
-
-Before executing a tool call, check NARS confidence on the tool's expected behavior. If confidence is below threshold (the tool hasn't been reliable), emit a warning event and optionally skip or use a fallback tool. This gives agents "learned tool preferences" based on experience.
-
-### N9. Multi-Lingual Agent Crews
-
-With German (and future language) translations, crews can have agents that operate in different languages. The GrammarTriangle's NSM layer (65 universal semantic primitives from Wierzbicka's linguistic research) provides language-independent fingerprints — an agent thinking in German and an agent thinking in English produce comparable fingerprints for the same concept.
-
-### N10. Crew Execution Replay
-
-Use Lance versioning + blackboard decision history to replay any crew execution:
-1. Load the initial state snapshot
-2. Step through each agent's decisions
-3. At any point, fork and try alternatives
-4. Compare outcomes via `diff_forks()`
-
-This is the ultimate debugging tool for multi-agent systems.
 
 ---
 
 ## Testing Strategy
 
-Each module gets its own test file under `tests/`:
-
 ```
 tests/
-    ladybug_rag_test.rs         // LadybugRagClient with all 3 search modes
-    ladybug_embedding_test.rs   // GrammarTriangle embedding generation
-    arrow_flight_test.rs        // Arrow Flight transport connect/call
-    hamming_udp_test.rs         // UDP transport with fallback
-    xai_provider_test.rs        // xAI API call (mock server)
-    ladybug_storage_test.rs     // Memory storage save/search/reset
-    shared_blackboard_test.rs   // Multi-agent awareness
-    ladybug_card_test.rs        // A2A capability discovery
-    structured_recall_test.rs   // NARS scoring on search results
-    rag_manager_test.rs         // Multi-provider search, failover
-    german_translations_test.rs // de.json structure matches en.json
+    ladybug_bridge_test.rs          // CrewBridge adapter: register agents, dispatch, tick
+    ladybug_persona_test.rs         // Agent→Persona conversion, compatibility, routing
+    ladybug_guardrail_test.rs       // Content filtering, denied topics, grounding
+    ladybug_observability_test.rs   // Sessions, traces, spans, OTEL export
+    ladybug_workflow_test.rs        // DAG execution: sequential, parallel, loop, conditional
+    ladybug_verification_test.rs    // Rule-based output verification
+    ladybug_counterfactual_test.rs  // Fork, diff, merge
+    ladybug_rag_test.rs             // Vector/Hamming/Hybrid search
+    ladybug_embedding_test.rs       // GrammarTriangle embedding generation
+    arrow_flight_test.rs            // Arrow Flight transport via crew_actions
+    hamming_udp_test.rs             // Firefly frame transport with fallback
+    ladybug_memory_test.rs          // Episodic/semantic/procedural memory
+    ladybug_a2a_test.rs             // A2A discovery, persona exchange
+    xai_provider_test.rs            // xAI API call (mock server)
+    german_translations_test.rs     // de.json structure matches en.json
 ```
 
 All tests must pass with `cargo test --features full`.
@@ -741,3 +548,21 @@ All tests must pass with `cargo test --features full`.
 5. **No unwrap in library code**: All errors propagated via `Result` / `anyhow`
 6. **Documentation**: Every public type and method has doc comments with examples
 7. **Backward compatibility**: Existing ChromaDB/Qdrant/OpenAI/Anthropic paths unchanged
+8. **Delegate, don't duplicate**: Where ladybug already implements a capability (orchestration, guardrails, workflows, etc.), wrap it — do not reimplement it in crewAI
+
+---
+
+## Key Insight: What Makes This Integration Different
+
+The v1 prompt treated ladybug-rs as a storage backend to plug into crewAI's architecture. That undersells both projects.
+
+**The correct framing**: crewAI-rust provides the **agent definition API** (Agent, Task, Crew, Tool, Memory trait signatures, I18N, process types) — the interface developers use. Ladybug-rs provides the **execution substrate** (orchestration, routing, awareness, verification, guardrails, observability) — the engine that makes agents actually work.
+
+With this integration:
+- `Crew::kickoff()` delegates to `CrewBridge::dispatch_crew()`
+- Agent delegation uses persona fingerprint matching instead of static assignment
+- Task handovers are flow-state-aware with Dunning-Kruger gap detection
+- Memory includes episodic/semantic/procedural types with ice-caked committed facts
+- Every execution is observable, guardrailed, and verifiable without LLM invocation
+- Agents develop affinity over repeated collaborations
+- Counterfactual forks enable hypothesis testing without corrupting shared state
