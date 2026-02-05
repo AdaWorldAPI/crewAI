@@ -851,6 +851,82 @@ pub struct EvaluationResult {
 
 ---
 
+## 13. Interface Gateway — External System Control (NEW in crewAI-rust)
+
+crewAI-rust now includes a complete interface gateway system that enables agents to control arbitrary external systems through YAML-referenced capability imports. This is the manifestation of the Bedrock AgentCore Gateway pattern at the crewAI level.
+
+### What Was Built (crewAI-rust `src/capabilities/`, `src/interfaces/`, `src/policy/`)
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `Capability` | `capabilities/capability.rs` | YAML-loadable capability definition (tools, interface, RBAC, policy) |
+| `CapabilityRegistry` | `capabilities/registry.rs` | Resolve `minecraft:server_control` → Capability struct from YAML |
+| `InterfaceGateway` | `interfaces/gateway.rs` | Route tool calls to protocol adapters, manage lifecycle |
+| `InterfaceAdapter` | `interfaces/adapter.rs` | Trait for protocol adapters (connect, execute, disconnect) |
+| `RestApiAdapter` | `interfaces/adapters/rest_api.rs` | Generic REST/OpenAPI adapter |
+| `RconAdapter` | `interfaces/adapters/rcon.rs` | RCON protocol (Minecraft, Source engine game servers) |
+| `GraphApiAdapter` | `interfaces/adapters/graph_api.rs` | Microsoft Graph API (O365 mail, calendar, Teams, OneDrive) |
+| `McpBridgeAdapter` | `interfaces/adapters/mcp_bridge.rs` | Bridge MCP servers as InterfaceAdapters |
+| `PolicyEngine` | `policy/mod.rs` | Deterministic action-level policy enforcement, Cedar export |
+| `RbacManager` | `policy/rbac.rs` | Agent → Role → Capability RBAC |
+
+### YAML Capability Definitions (crewAI-rust `capabilities/`)
+
+| File | Capability ID | Protocol | Description |
+|------|--------------|----------|-------------|
+| `minecraft/server_control.yaml` | `minecraft:server_control` | RCON | Minecraft server management (commands, players, whitelist, ops) |
+| `o365/mail.yaml` | `o365:mail` | MS Graph | Microsoft 365 email (list, read, send) |
+| `o365/calendar.yaml` | `o365:calendar` | MS Graph | Microsoft 365 calendar (list events, create meetings) |
+| `rest_api/generic.yaml` | `rest_api:generic` | REST | Generic REST API adapter for any HTTP endpoint |
+| `mcp/bridge.yaml` | `mcp:bridge` | MCP | Bridge to any MCP server (auto-discovery) |
+
+### How It Works
+
+```yaml
+# In agent card:
+capabilities:
+  imports:
+    - "minecraft:server_control"
+    - "o365:mail"
+  connections:
+    "minecraft:server_control":
+      host: "${MINECRAFT_HOST}"
+      password: "${RCON_PASSWORD}"
+    "o365:mail":
+      tenant_id: "${AZURE_TENANT_ID}"
+      client_id: "${AZURE_CLIENT_ID}"
+      client_secret: "${AZURE_CLIENT_SECRET}"
+roles:
+  assigned: ["server_admin", "mail_user"]
+```
+
+### What Ladybug-rs Should Integrate
+
+The crewAI-rust capability system provides the **API surface**. Ladybug-rs should provide the **semantic substrate**:
+
+1. **Fingerprint capabilities**: Each `Capability` should get a 10K-bit fingerprint for semantic discovery. `kernel.resonate(task_fp, capability_registry)` finds the best capability for a task.
+
+2. **Policy enforcement at BindSpace level**: The crewAI `PolicyEngine` enforces at the tool-call level. Ladybug's `KernelGuardrail` should intercept at the fingerprint level — blocking CAM operations before they reach the adapter.
+
+3. **Capability-aware handover**: When the MetaOrchestrator detects an agent needs a capability it doesn't have, it should handover to an agent that does (via capability fingerprint matching, not just persona affinity).
+
+4. **Interface adapter as CAM operations**: Each adapter operation should map to a CAM opcode range. `capability.cam_opcode_range: (0x1000, 0x10FF)` reserves 256 opcodes for Minecraft operations. The kernel can then `operate(0x1002, args)` to call a specific adapter operation.
+
+5. **Cross-system orchestration**: An agent with both `minecraft:server_control` and `o365:mail` capabilities can: detect server issues via RCON → compose a report → email it to admins. The blackboard awareness system enables this: the RCON check writes findings to 0x0E:agent, the mail composition task resonates against it.
+
+### Extending to New Systems
+
+To control a new external system (e.g., AWS infrastructure, Kubernetes clusters, IoT devices):
+
+1. Create a capability YAML in `capabilities/aws/ec2_control.yaml`
+2. Implement `InterfaceAdapter` for the AWS SDK protocol
+3. Register the factory with `gateway.register_factory(Box::new(AwsSdkAdapterFactory))`
+4. Agents declare `capabilities: [aws:ec2_control]` in their YAML card
+
+The architecture is intentionally extensible: **any system with an API becomes an agent-controllable interface, gated by RBAC and deterministic policy enforcement**.
+
+---
+
 ## Constraints
 
 1. **No breaking changes** to existing ladybug-rs public APIs

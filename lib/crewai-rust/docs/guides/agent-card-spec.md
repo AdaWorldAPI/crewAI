@@ -702,6 +702,83 @@ counterfactual:
   merge_strategy: "confidence_threshold"  # "accept_all", "confidence_threshold", "manual"
   fork_on_low_confidence: true         # Automatically fork when confidence < 0.50
   preserve_fork_history: true          # Keep fork/merge history for replay
+
+# ─────────────────────────────────────────────────────────────────
+# 14. CAPABILITIES — What external systems can this agent control?
+#     (crewAI-rust CapabilityRegistry + InterfaceGateway + PolicyEngine)
+# ─────────────────────────────────────────────────────────────────
+capabilities:
+  # Import pre-defined capability bundles by namespaced ID.
+  # Each capability resolves to a YAML file in the capabilities/ directory
+  # that defines: tools, interface protocol, RBAC policy, and metadata.
+  #
+  # The InterfaceGateway binds each capability to an adapter at runtime.
+  # The PolicyEngine enforces RBAC and action-level constraints.
+  #
+  # This is how agents can control Minecraft servers, O365 tenants,
+  # REST APIs, MCP servers, databases, and any other external system.
+
+  imports:
+    - "minecraft:server_control"       # RCON adapter → game server management
+    - "o365:mail"                      # MS Graph API → email read/send
+    - "o365:calendar"                  # MS Graph API → calendar management
+    - "rest_api:generic"               # REST adapter → any HTTP endpoint
+    - "mcp:bridge"                     # MCP bridge → any MCP server
+
+  # Connection configuration for each imported capability.
+  # These are passed to the InterfaceAdapter.connect() method.
+  # Secrets use ${ENV_VAR} interpolation — never hardcoded.
+  connections:
+    "minecraft:server_control":
+      host: "${MINECRAFT_HOST}"
+      port: 25575
+      password: "${MINECRAFT_RCON_PASSWORD}"
+      timeout_ms: 5000
+
+    "o365:mail":
+      tenant_id: "${AZURE_TENANT_ID}"
+      client_id: "${AZURE_CLIENT_ID}"
+      client_secret: "${AZURE_CLIENT_SECRET}"
+
+    "o365:calendar":
+      tenant_id: "${AZURE_TENANT_ID}"
+      client_id: "${AZURE_CLIENT_ID}"
+      client_secret: "${AZURE_CLIENT_SECRET}"
+
+    "rest_api:generic":
+      base_url: "https://api.github.com"
+      auth_header: "Authorization"
+      auth_prefix: "Bearer"
+      auth_token: "${GITHUB_TOKEN}"
+
+    "mcp:bridge":
+      transport: "stdio"
+      command: "npx"
+      args: ["@modelcontextprotocol/server-filesystem", "/workspace"]
+
+# ─────────────────────────────────────────────────────────────────
+# 15. ROLES — RBAC role assignments for this agent
+#     (crewAI-rust RbacManager → PolicyEngine integration)
+# ─────────────────────────────────────────────────────────────────
+roles:
+  # Roles determine which capabilities this agent can access.
+  # Each capability declares `requires_roles` in its policy section.
+  # The PolicyEngine verifies: agent.roles ⊇ capability.policy.requires_roles
+  assigned:
+    - "researcher"                     # Base role — can use research tools
+    - "server_admin"                   # Can manage Minecraft server
+    - "mail_user"                      # Can read/send O365 email
+    - "calendar_user"                  # Can manage O365 calendar
+
+  # Custom role definitions (override built-in role semantics)
+  definitions:
+    - name: "server_admin"
+      description: "Can manage game servers, whitelist players, but cannot stop/restart"
+      capabilities:
+        - "minecraft:server_control"
+      restrictions:
+        - tool: "mc_execute"
+          deny_commands: ["stop", "restart", "reload"]
 ```
 
 ---
@@ -740,11 +817,13 @@ Everything else defaults to sensible values. The full specification only matters
 | `knowledge.*` | `KnowledgeSource` | `GrammarTriangle` embeddings |
 | `a2a.*` | `A2AServerConfig` | `A2AProtocol`, `PersonaExchange` |
 | `flow.*` | — | `HandoverPolicy`, `FlowState`, `MetaOrchestrator` routing |
-| `policy.*` | — | `PolicyEngine`, `PolicyRule` |
+| `policy.*` | `PolicyEngine`, `PolicyRule` | `PolicyEngine` + Cedar export |
 | `evaluation.*` | — | `EvaluationEngine`, `Evaluator` trait impls |
 | `guardrails.*` | `Guardrail` | `KernelGuardrail`, `FilterPipeline` |
 | `observability.*` | `Telemetry` | `ObservabilityManager`, `KernelTrace` |
 | `counterfactual.*` | — | `CounterfactualExplorer` |
+| `capabilities.*` | `CapabilityRegistry`, `InterfaceGateway` | `ToolGateway` (CAM-addressable) |
+| `roles.*` | `RbacManager` | Role → Capability mapping |
 
 ---
 
@@ -752,6 +831,9 @@ Everything else defaults to sensible values. The full specification only matters
 
 ```rust
 use crewai::Agent;
+use crewai::capabilities::CapabilityRegistry;
+use crewai::interfaces::InterfaceGateway;
+use crewai::policy::PolicyEngine;
 use ladybug_rs::orchestration::crew_bridge::CrewBridge;
 
 // Load from YAML
@@ -760,15 +842,42 @@ let yaml = std::fs::read_to_string("agents/research_analyst.yaml")?;
 // crewAI layer: creates the Agent with tools, memory, knowledge
 let agent = Agent::from_yaml(&yaml)?;
 
+// Capability layer: resolve imported capabilities
+let mut registry = CapabilityRegistry::with_defaults();
+registry.load_all()?;  // Scan capabilities/ directory
+
+// Interface layer: bind capabilities to adapters
+let mut gateway = InterfaceGateway::with_defaults();
+for cap_id in &agent.capabilities {
+    if let Some(cap) = registry.resolve(cap_id) {
+        let conn_config = agent.connections.get(cap_id).cloned().unwrap_or_default();
+        gateway.bind_capability(cap, &conn_config).await?;
+    }
+}
+
+// Policy layer: load RBAC and capability-specific rules
+let mut policy = PolicyEngine::new();
+for cap_id in &agent.capabilities {
+    if let Some(cap) = registry.resolve(cap_id) {
+        policy.load_capability_policy(&cap.id, &cap.policy);
+    }
+}
+for role in &agent.roles {
+    policy.rbac.assign_role(&agent.id, role);
+}
+
 // ladybug layer: registers persona, thinking template, policies, evaluators
 let mut bridge = CrewBridge::new();
 bridge.register_agents_yaml(&yaml)?;
 bridge.register_templates_yaml(&yaml)?;
 
-// The agent is now fully configured at both layers:
+// The agent is now fully configured at ALL layers:
 // - crewAI knows its role, tools, and memory
-// - ladybug knows its persona, thinking style, policies, and evaluation criteria
+// - Capabilities are resolved and adapters are connected
+// - PolicyEngine enforces RBAC + action-level constraints
+// - ladybug knows its persona, thinking style, policies, evaluation criteria
 // - BindSpace contains its fingerprinted identity at slot 0x0C01
+// - Agent can now control: Minecraft server, O365 mail, calendar, REST APIs, MCP servers
 ```
 
 ---
