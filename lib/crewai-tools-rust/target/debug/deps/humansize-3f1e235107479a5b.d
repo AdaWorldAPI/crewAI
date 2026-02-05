@@ -1,0 +1,12 @@
+/home/user/crewAI/lib/crewai-tools-rust/target/debug/deps/humansize-3f1e235107479a5b.d: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/options/mod.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/options/defaults.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/numeric_traits.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/scales.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/utils.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/allocating.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/formatters.rs
+
+/home/user/crewAI/lib/crewai-tools-rust/target/debug/deps/libhumansize-3f1e235107479a5b.rmeta: /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/lib.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/options/mod.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/options/defaults.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/numeric_traits.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/scales.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/utils.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/allocating.rs /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/formatters.rs
+
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/lib.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/options/mod.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/options/defaults.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/numeric_traits.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/scales.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/utils.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/allocating.rs:
+/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/humansize-2.1.3/src/formatters.rs:
