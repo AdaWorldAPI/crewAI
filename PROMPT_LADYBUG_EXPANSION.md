@@ -1,346 +1,537 @@
-# Ladybug-rs Expansion Prompt: crewAI Integration Surface
+# Ladybug-rs Expansion Prompt: crewAI Integration Surface (v2)
 
 ## Context
 
 This prompt specifies the expansions needed in **ladybug-rs** (`AdaWorldAPI/ladybug-rs`) to serve as the cognitive backbone for **crewAI-rust** (`/lib/crewai-rust/`), a 1:1 Rust port of the crewAI Python multi-agent orchestration framework.
 
-crewAI-rust has these trait-based extension points that ladybug-rs must satisfy:
+**What has changed since v1**: A thorough audit of ladybug-rs reveals that most of what v1 proposed as "to be built" already exists. The orchestration layer (`CrewBridge`, `MetaOrchestrator`, `SemanticKernel`, `A2AProtocol`, `PersonaRegistry`, `HandoverPolicy`, `KernelExtensions`) is fully implemented. This v2 prompt focuses on:
+1. Gaps that actually remain
+2. Architecture patterns harvested from Amazon Bedrock AgentCore that should inform ladybug-rs's agent infrastructure
+3. Production-hardening the existing integration surface
 
-- `BaseClient` — vector store interface (create/search/add/delete collections)
-- `BaseEmbeddingsProvider` + `EmbeddingFunctionTrait` — embedding generation
-- `BaseTransport` — MCP transport layer (currently: Stdio, HTTP, SSE)
-- `Storage` — agent memory persistence (save/search/reset)
-- `BaseKnowledgeStorage` — knowledge chunk storage and retrieval
-- `BaseLLM` — LLM provider interface (for xAI/Grok integration)
-- `BaseEvent` — event emission for observability
+**Reference architecture**: `AdaWorldAPI/amazon-bedrock-agentcore-samples` demonstrates enterprise-grade agent infrastructure patterns that ladybug-rs should match or exceed:
+- **Runtime**: Serverless agent deployment with session isolation, middleware support, bidirectional streaming
+- **Gateway**: Automatic API → MCP tool conversion
+- **Memory**: Managed persistent memory with session continuity
+- **Identity**: Agent identity and access management across services
+- **Observability**: OpenTelemetry-native tracing
+- **Multi-agent**: Supervisor patterns, A2A orchestration, distributed hosting
 
-The goal: ladybug-rs provides **one unified crate** that crewAI-rust depends on behind a `ladybug` feature flag. All expansions are additive — no breaking changes to existing ladybug-rs APIs.
+---
+
+## What Already Exists (Audit Confirmed — Do NOT Reimplement)
+
+| Component | File | Status |
+|-----------|------|--------|
+| CrewBridge | `orchestration/crew_bridge.rs` | Complete — agents, personas, blackboards, A2A, orchestrator, kernel, filters, guardrails, memory, observability, verification all composed |
+| MetaOrchestrator | `orchestration/meta_orchestrator.rs` | Complete — affinity graph, resonance routing, flow-state handovers |
+| A2AProtocol | `orchestration/a2a.rs` | Complete — 8 message types, XOR superposition channels, awareness metrics |
+| PersonaRegistry | `orchestration/persona.rs` | Complete — 5-axis volition, communication style, fingerprint compatibility |
+| HandoverPolicy | `orchestration/handover.rs` | Complete — 7 thresholds, DK gap detection, metacognitive review |
+| SemanticKernel | `orchestration/semantic_kernel.rs` | Complete — 20+ ops, NARS truth, Pearl's 3-rung, plugin registry |
+| ThinkingTemplates | `orchestration/thinking_template.rs` | Complete — 12 base + 244 custom, HDR matching |
+| BlackboardAgent | `orchestration/blackboard_agent.rs` | Complete — per-agent state, ice-caking, coherence tracking |
+| KernelExtensions | `orchestration/kernel_extensions.rs` | Complete — filters, guardrails, workflows, memory, observability, verification |
+| Arrow Flight crew_actions | `flight/crew_actions.rs` | Complete — 50+ DoAction handlers for crewAI operations |
+| BindSpace | `storage/bind_space.rs` | Complete — 65,536 O(1) addresses |
+| GrammarTriangle | `grammar/triangle.rs` | Complete — NSM + Causality + Qualia → 10K-bit fingerprints |
+| NARS Engine | `nars/` | Complete — 4 inference rules, evidence tracking |
+| Fabric | `fabric/` | Complete — Firefly frames, UDP transport, zero-copy, mRNA resonance |
+| Counterfactuals | `world/counterfactual.rs` | Complete — fork, diff, merge |
 
 ---
 
 ## Required Expansions
 
-### 1. `crewai_compat` module — Trait adapter layer
+### 1. Agent Runtime Layer (Inspired by Bedrock AgentCore Runtime)
 
-Create `src/crewai_compat/mod.rs` exposing adapter structs that wrap existing ladybug internals to satisfy crewAI trait signatures. This is the primary integration surface.
+Bedrock AgentCore provides a serverless runtime with session isolation, middleware chains, and bidirectional streaming. Ladybug-rs should offer an equivalent Rust-native runtime that goes further.
 
-#### 1.1 `LadybugClient` — implements crewAI `BaseClient`
+#### 1.1 `AgentRuntime` — Managed Agent Lifecycle
 
-Wrap `Database` to implement the vector store interface:
-
-```rust
-pub struct LadybugClient {
-    db: Arc<Database>,
-    default_limit: usize,
-    default_score_threshold: f64,
-}
-```
-
-**Method mapping:**
-
-| crewAI `BaseClient` method | ladybug-rs implementation |
-|---|---|
-| `create_collection(params)` | `db.create_lance_table(collection_name, schema)` |
-| `get_or_create_collection(params)` | Check existence, create if missing |
-| `add_documents(params)` | Convert `BaseRecord` → Arrow `RecordBatch`, append to Lance table |
-| `search(params)` | **Dual-path**: if query has fingerprint → Hamming search; else → vector ANN via Lance `nearest_to()` |
-| `delete_collection(params)` | Drop Lance table |
-| `reset()` | Drop and recreate all tables |
-
-**Critical**: The `search` method must support **three search modes** selectable via metadata filter:
-- `"mode": "vector"` — IVF-PQ ANN on 1024-dim embeddings (current Lance behavior)
-- `"mode": "hamming"` — AVX-512 SIMD on 10K-bit fingerprints
-- `"mode": "hybrid"` — Vector pre-filter → Hamming re-rank (new, highest quality)
-
-The hybrid mode is what makes this integration special. Vector search casts a wide net (top-100), then Hamming distance on fingerprints re-ranks for interpretable precision.
-
-#### 1.2 `GrammarTriangleEmbedder` — implements crewAI `BaseEmbeddingsProvider` + `EmbeddingFunctionTrait`
-
-Wrap `GrammarTriangle` to produce embeddings:
+Create `src/runtime/mod.rs`:
 
 ```rust
-pub struct GrammarTriangleEmbedder {
-    triangle: GrammarTriangle,
-    output_mode: EmbedderOutputMode,
+pub struct AgentRuntime {
+    pub bridge: CrewBridge,
+    pub space: BindSpace,
+    pub sessions: SessionManager,
+    pub middleware: MiddlewareChain,
+    pub config: RuntimeConfig,
 }
 
-pub enum EmbedderOutputMode {
-    /// 1024-dim dense vector (from NSM weights, padded/projected)
-    DenseVector,
-    /// 10K-bit fingerprint as f32 binary vector (1.0/0.0 per bit)
-    BinaryFingerprint,
-    /// Both: dense for ANN index, fingerprint for Hamming re-rank
-    Dual,
-}
-```
-
-| crewAI trait method | Implementation |
-|---|---|
-| `provider_name()` | `"ladybug-grammar-triangle"` |
-| `embed_text(text)` | `triangle.analyze(text)` → extract NSM weights → project to 1024-dim |
-| `embed_documents(docs)` | Batch `analyze()` with SIMD-parallel fingerprint generation |
-| `embed_query(input)` | Same as `embed_text`, optimized for single query |
-| `call(inputs)` | Batch embedding, returns `Vec<Vec<f32>>` |
-
-**The NSM-to-dense projection**: The 65 NSM primitive weights need to be projected into a 1024-dim space compatible with Lance IVF-PQ indices. Use a fixed learned projection matrix (65 × 1024) stored as a const array. This allows the GrammarTriangle output to be stored alongside Jina embeddings in the same Lance table, enabling gradual migration.
-
-#### 1.3 `LadybugMemoryStorage` — implements crewAI `Storage`
-
-Wrap `Database` + `Blackboard` for agent memory:
-
-```rust
-pub struct LadybugMemoryStorage {
-    db: Arc<Database>,
-    blackboard: Arc<RwLock<Blackboard>>,
-    collection_name: String,
-}
-```
-
-| crewAI `Storage` method | Implementation |
-|---|---|
-| `save(value, metadata)` | Encode via GrammarTriangle → store in Lance nodes table with metadata |
-| `search(query, limit, threshold)` | Hybrid search (vector + Hamming re-rank) |
-| `reset()` | Clear collection, reset blackboard |
-
-**Blackboard integration**: Every `save()` also records the operation in the blackboard's decision history. Every `search()` checks the blackboard's frozen layers first — if a relevant fact is ice-caked (committed), it's returned with boosted score. This gives agents "committed knowledge" that survives across crew executions.
-
-#### 1.4 `LadybugKnowledgeStorage` — implements crewAI `BaseKnowledgeStorage`
-
-Similar to memory storage but specialized for knowledge ingestion:
-
-```rust
-pub struct LadybugKnowledgeStorage {
-    db: Arc<Database>,
-    collection_prefix: String,
-    chunk_size: usize,
-    chunk_overlap: usize,
-}
-```
-
-| crewAI `BaseKnowledgeStorage` method | Implementation |
-|---|---|
-| `search(query, limit, threshold)` | Hybrid search on knowledge collection |
-| `save(documents)` | Chunk → encode → store with source metadata |
-| `save_chunks(chunks, metadata)` | Encode each chunk → batch insert into Lance |
-| `reset()` | Drop knowledge collection |
-
-**Structured recall enhancement**: Before returning search results, run NARS inference on the result set. For each result, compute a truth value `{frequency, confidence}` based on:
-- How many independent sources mention this fact (frequency)
-- How recent and how many retrievals confirmed it (confidence)
-
-Return results annotated with NARS truth values in metadata:
-```json
-{"content": "...", "score": 0.87, "nars_truth": {"frequency": 0.92, "confidence": 0.78}}
-```
-
-This is the **structured recall improvement** — agents can distinguish between "frequently confirmed facts" and "one-off mentions."
-
----
-
-### 2. Arrow Flight MCP Transport
-
-Create `src/crewai_compat/flight_transport.rs`:
-
-```rust
-pub struct ArrowFlightTransport {
-    endpoint: String,
-    client: Option<FlightClient>,
-    connected: bool,
-}
-```
-
-This implements crewAI's `BaseTransport` trait, mapping MCP operations to Arrow Flight:
-
-| MCP operation | Arrow Flight mapping |
-|---|---|
-| `connect()` | `FlightClient::connect(endpoint)` |
-| `disconnect()` | Drop client |
-| `list_tools()` | `DoAction("list_tools")` → deserialize tool list from RecordBatch |
-| `call_tool(name, args)` | `DoAction(name, args)` → return result as string |
-| `list_prompts()` | `DoAction("list_prompts")` |
-
-**Transport type**: Register as `TransportType::ArrowFlight` (new variant).
-
-**Zero-copy advantage**: Tool results that contain tabular data (search results, aggregations) arrive as Arrow RecordBatch — no JSON serialization overhead. For agents processing large datasets, this is orders of magnitude faster than JSON-RPC.
-
----
-
-### 3. Bitpacked Hamming UDP Transport
-
-Create `src/crewai_compat/udp_transport.rs`:
-
-Leverage ladybug's existing `fabric/udp_transport.rs` and `fabric/firefly.rs`:
-
-```rust
-pub struct HammingUdpTransport {
-    endpoint: String,
-    lane: u8,
-    connected: bool,
-}
-```
-
-This is the **ultra-low-latency transport** for same-network agent communication:
-
-| MCP operation | UDP mapping |
-|---|---|
-| `connect()` | Bind UDP socket, join multicast group |
-| `call_tool(name, args)` | Encode as Firefly instruction frame (1250-bit packed), send via UDP lane |
-| Result | Receive response frame, decode |
-
-**When to use**: Inter-agent tool calls within the same crew execution where latency matters more than reliability. The Firefly frame format packs a tool call into 1250 bits — at UDP speeds, this means sub-millisecond agent-to-agent tool invocation.
-
-**Fallback**: If UDP delivery fails (no ACK within 5ms), automatically retry via HTTP transport. This makes it safe to use as default for local crews.
-
----
-
-### 4. A2A Agent Card with CAM Capabilities
-
-Create `src/crewai_compat/agent_card.rs`:
-
-Extend ladybug's 4096 CAM operations to serve as a **queryable agent capability registry**:
-
-```rust
-pub struct LadybugAgentCard {
-    pub name: String,
-    pub description: String,
-    pub version: String,
-    pub url: Option<String>,
-    pub capabilities: Arc<CamDictionary>,
-    pub db: Arc<Database>,
+pub struct RuntimeConfig {
+    pub max_concurrent_sessions: usize,
+    pub session_timeout: Duration,
+    pub enable_bidirectional_streaming: bool,
+    pub middleware_stack: Vec<Box<dyn Middleware>>,
+    pub identity_provider: Option<Box<dyn IdentityProvider>>,
 }
 
-impl LadybugAgentCard {
-    /// Query capabilities by semantic description.
-    /// Returns matching CAM operations ranked by Hamming similarity.
-    pub fn query_capabilities(&self, description: &str) -> Vec<CamCapability>;
+impl AgentRuntime {
+    /// Deploy an agent into the runtime. Returns a handle for invocation.
+    pub fn deploy(&mut self, agent_card: AgentCard, persona: Persona) -> Result<AgentHandle>;
 
-    /// Standard A2A agent card JSON representation.
-    pub fn to_agent_card_json(&self) -> Value;
-
-    /// Discover what this agent can do for a given task description.
-    /// Uses GrammarTriangle to encode the task, then Hamming-matches
-    /// against all 4096 CAM operation fingerprints.
-    pub fn discover_for_task(&self, task_description: &str) -> Vec<DiscoveredCapability>;
-}
-
-pub struct DiscoveredCapability {
-    pub cam_id: u16,
-    pub name: String,
-    pub description: String,
-    pub hamming_similarity: f64,
-    pub nars_confidence: f64,
-}
-```
-
-This is what makes A2A discovery **semantic** rather than static. Instead of listing capabilities in a JSON file, agents ask "can you help with X?" and get ranked, confidence-scored answers.
-
----
-
-### 5. Shared Awareness via Blackboard Extensions
-
-Extend `src/learning/blackboard.rs` with multi-agent awareness:
-
-```rust
-impl Blackboard {
-    /// Register an agent's presence in the shared blackboard.
-    pub fn register_agent(&mut self, agent_id: &str, role: &str, capabilities: Vec<String>);
-
-    /// Post an observation visible to all agents.
-    pub fn post_observation(&mut self, agent_id: &str, observation: Value);
-
-    /// Read observations from other agents since last read.
-    pub fn read_observations(&self, agent_id: &str, since: Option<DateTime<Utc>>) -> Vec<Observation>;
-
-    /// Propose a commitment (FLOW/HOLD/BLOCK) that other agents can see.
-    pub fn propose_commitment(&mut self, agent_id: &str, commitment: IceCakedLayer);
-
-    /// Vote on another agent's proposed commitment.
-    pub fn vote_commitment(&mut self, voter_id: &str, commitment_id: &str, vote: CommitmentVote);
-
-    /// Get the current shared awareness state for an agent.
-    pub fn awareness_state(&self, agent_id: &str) -> SharedAwarenessState;
-}
-
-pub struct Observation {
-    pub agent_id: String,
-    pub timestamp: DateTime<Utc>,
-    pub content: Value,
-    pub fingerprint: Fingerprint,
-}
-
-pub struct SharedAwarenessState {
-    pub registered_agents: Vec<AgentPresence>,
-    pub pending_observations: Vec<Observation>,
-    pub active_commitments: Vec<IceCakedLayer>,
-    pub consensus_score: f64,
-}
-
-pub enum CommitmentVote {
-    Agree,
-    Disagree(String), // reason
-    Abstain,
-}
-```
-
-This transforms the single-agent blackboard into a **multi-agent shared awareness system**. Agents can:
-- See what other agents are working on
-- Share intermediate findings
-- Reach consensus on committed facts (ice-caked layers require majority vote)
-
----
-
-### 6. NARS-Enhanced Result Scoring
-
-Create `src/crewai_compat/nars_scoring.rs`:
-
-```rust
-pub struct NarsScorer {
-    nars: NarsEngine,
-}
-
-impl NarsScorer {
-    /// Score a set of search results using NARS inference.
-    ///
-    /// For each result, computes truth value {frequency, confidence} by:
-    /// 1. Checking how many independent evidence paths support the claim
-    /// 2. Applying deduction/induction/abduction rules
-    /// 3. Combining with retrieval score as prior
-    pub fn score_results(
+    /// Invoke an agent within an isolated session.
+    /// Same session_id preserves context across calls (Bedrock pattern).
+    pub async fn invoke(
         &self,
-        results: &[SearchResult],
-        query_context: &QueryContext,
-    ) -> Vec<ScoredResult>;
+        agent_handle: &AgentHandle,
+        session_id: &str,
+        payload: Value,
+    ) -> Result<AgentResponse>;
 
-    /// Perform abductive reasoning: given a result, what's the best explanation?
-    pub fn explain_result(&self, result: &SearchResult) -> NarsExplanation;
+    /// Invoke with bidirectional streaming (WebSocket-like).
+    pub async fn invoke_streaming(
+        &self,
+        agent_handle: &AgentHandle,
+        session_id: &str,
+        input_stream: impl Stream<Item = Value>,
+    ) -> impl Stream<Item = AgentResponse>;
+
+    /// Hot-reload an agent without dropping sessions.
+    pub fn redeploy(&mut self, handle: &AgentHandle, new_card: AgentCard) -> Result<()>;
+
+    /// Get runtime metrics: active sessions, agent utilization, queue depth.
+    pub fn metrics(&self) -> RuntimeMetrics;
+}
+```
+
+#### 1.2 `SessionManager` — Isolated Session State
+
+```rust
+pub struct SessionManager {
+    sessions: HashMap<String, AgentSession>,
+    isolation_mode: IsolationMode,
 }
 
-pub struct ScoredResult {
-    pub result: SearchResult,
-    pub nars_truth: TruthValue,
-    pub explanation: Option<String>,
-    pub evidence_count: usize,
+pub struct AgentSession {
+    pub id: String,
+    pub agent_slot: u8,
+    pub created_at: DateTime<Utc>,
+    pub last_active: DateTime<Utc>,
+    pub state: SessionState,
+    pub memory_snapshot: Option<Addr>,
+    pub blackboard_snapshot: Option<Addr>,
 }
 
-pub struct QueryContext {
-    pub query: String,
-    pub agent_role: Option<String>,
-    pub task_description: Option<String>,
-    pub prior_results: Vec<Value>,
+pub enum IsolationMode {
+    /// Each session gets its own BindSpace prefix range (strongest isolation).
+    PrefixIsolated,
+    /// Sessions share BindSpace but blackboard entries are tagged (moderate isolation).
+    TagIsolated,
+    /// Shared state — all sessions see all data (for collaborative crews).
+    Shared,
+}
+
+impl SessionManager {
+    /// Create or resume a session. Bedrock pattern: same ID = same context.
+    pub fn get_or_create(&mut self, session_id: &str, agent_slot: u8) -> &mut AgentSession;
+
+    /// Persist session state to Lance for durability.
+    pub async fn persist(&self, session_id: &str) -> Result<()>;
+
+    /// Restore session state from Lance.
+    pub async fn restore(&mut self, session_id: &str) -> Result<()>;
+
+    /// Expire sessions that have been idle beyond timeout.
+    pub fn expire_idle(&mut self, timeout: Duration) -> Vec<String>;
+}
+```
+
+#### 1.3 `MiddlewareChain` — Request/Response Interceptors
+
+Inspired by Bedrock's ASGI middleware support. Ladybug's version operates on fingerprints instead of HTTP.
+
+```rust
+pub trait Middleware: Send + Sync {
+    /// Process before agent execution. Can modify the request or short-circuit.
+    fn before(&self, ctx: &mut MiddlewareContext) -> MiddlewareAction;
+
+    /// Process after agent execution. Can modify the response.
+    fn after(&self, ctx: &mut MiddlewareContext, response: &mut AgentResponse);
+}
+
+pub enum MiddlewareAction {
+    Continue,
+    ShortCircuit(AgentResponse),
+}
+
+pub struct MiddlewareContext {
+    pub session_id: String,
+    pub agent_slot: u8,
+    pub payload: Value,
+    pub fingerprint: Option<[u64; FINGERPRINT_WORDS]>,
+    pub metadata: HashMap<String, String>,
+    pub timing: MiddlewareTiming,
+}
+```
+
+**Built-in middleware** (shipped with ladybug-rs):
+
+| Middleware | Purpose |
+|-----------|---------|
+| `GuardrailMiddleware` | Run KernelGuardrail on input/output |
+| `ObservabilityMiddleware` | Auto-create spans for every invocation |
+| `RateLimitMiddleware` | Token bucket rate limiting per session |
+| `AuthMiddleware` | Validate agent identity tokens |
+| `FingerprintCacheMiddleware` | Cache fingerprint computations for repeated queries |
+| `FilterMiddleware` | Run FilterPipeline on request/response |
+
+---
+
+### 2. Gateway — API-to-Tool Conversion (Inspired by Bedrock AgentCore Gateway)
+
+Bedrock converts Lambda functions and APIs into MCP-compatible tools. Ladybug should convert arbitrary services into CAM-addressable operations.
+
+#### 2.1 `ToolGateway` — Automatic Service Discovery
+
+Create `src/gateway/mod.rs`:
+
+```rust
+pub struct ToolGateway {
+    pub tools: Vec<GatewayTool>,
+    pub space: Arc<RwLock<BindSpace>>,
+}
+
+pub struct GatewayTool {
+    pub name: String,
+    pub description: String,
+    pub cam_opcode: u16,
+    pub source: ToolSource,
+    pub fingerprint: [u64; FINGERPRINT_WORDS],
+    pub input_schema: Value,
+    pub output_schema: Value,
+}
+
+pub enum ToolSource {
+    /// HTTP REST endpoint (OpenAPI spec)
+    OpenApi { spec: Value, base_url: String },
+    /// MCP server (stdio, HTTP, or SSE)
+    Mcp { transport: TransportConfig },
+    /// Arrow Flight DoAction
+    ArrowFlight { endpoint: String, action: String },
+    /// Local Rust function
+    Native { handler: Arc<dyn Fn(Value) -> Result<Value> + Send + Sync> },
+    /// CAM operation (internal)
+    CamOp { opcode: u16 },
+}
+
+impl ToolGateway {
+    /// Import tools from an OpenAPI specification.
+    /// Each endpoint becomes a GatewayTool with auto-generated fingerprint.
+    pub fn import_openapi(&mut self, spec: &Value, base_url: &str) -> Result<Vec<u16>>;
+
+    /// Import tools from an MCP server's tool list.
+    pub fn import_mcp(&mut self, transport: &TransportConfig) -> Result<Vec<u16>>;
+
+    /// Discover tools semantically: "find tools that can do X"
+    /// Fingerprints the query and Hamming-matches against all tool fingerprints.
+    pub fn discover(&self, description: &str, limit: usize) -> Vec<(GatewayTool, f32)>;
+
+    /// Invoke a tool by name or CAM opcode.
+    pub async fn invoke(&self, tool_id: &str, args: Value) -> Result<Value>;
+
+    /// Bind all tools into BindSpace for kernel operations.
+    pub fn bind_all(&self, space: &mut BindSpace);
+}
+```
+
+This goes beyond Bedrock's Gateway: tools are fingerprinted for semantic discovery, addressable by CAM opcode for O(1) dispatch, and stored in BindSpace alongside agents and knowledge.
+
+---
+
+### 3. Agent Identity Layer (Inspired by Bedrock AgentCore Identity)
+
+Bedrock provides agent identity across AWS services. Ladybug should provide identity that works with any service.
+
+#### 3.1 `AgentIdentity` — Cryptographic Agent Identity
+
+Create `src/identity/mod.rs`:
+
+```rust
+pub struct AgentIdentity {
+    pub agent_slot: u8,
+    pub agent_id: String,
+    pub keypair: Ed25519Keypair,
+    pub capabilities: Vec<Capability>,
+    pub issued_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+pub struct Capability {
+    pub resource: String,
+    pub actions: Vec<String>,
+    pub conditions: Option<Value>,
+}
+
+pub trait IdentityProvider: Send + Sync {
+    /// Issue an identity for a newly registered agent.
+    fn issue(&self, agent_card: &AgentCard) -> Result<AgentIdentity>;
+
+    /// Verify an agent's identity token.
+    fn verify(&self, token: &str) -> Result<AgentIdentity>;
+
+    /// Check if an agent has a specific capability.
+    fn authorize(&self, identity: &AgentIdentity, resource: &str, action: &str) -> bool;
+}
+
+impl AgentIdentity {
+    /// Sign a message (tool call, A2A message, etc.) with this agent's key.
+    pub fn sign(&self, message: &[u8]) -> Signature;
+
+    /// Verify a signature from another agent.
+    pub fn verify_signature(&self, message: &[u8], signature: &Signature, peer_id: &AgentIdentity) -> bool;
+
+    /// Create a delegation token: agent A authorizes agent B to act on its behalf.
+    pub fn delegate(&self, delegatee: &AgentIdentity, scope: Vec<Capability>, ttl: Duration) -> DelegationToken;
+}
+```
+
+This enables:
+- Agents sign tool calls and A2A messages → non-repudiation
+- Delegation chains: orchestrator delegates capabilities to sub-agents
+- Capability-based access control per agent
+
+---
+
+### 4. Enhanced crewAI Compatibility Layer
+
+The existing `crewai_compat` module needs updating to match the newly audited crewAI-rust trait signatures.
+
+#### 4.1 Update `LadybugClient` — `BaseClient` implementation
+
+Ensure the `BaseClient` implementation matches the exact crewAI-rust trait:
+
+```rust
+#[async_trait]
+pub trait BaseClient: Send + Sync {
+    fn create_collection(&self, params: CollectionParams) -> Result<()>;
+    fn get_or_create_collection(&self, params: CollectionParams) -> Result<()>;
+    fn add_documents(&self, params: CollectionAddParams) -> Result<()>;
+    fn search(&self, params: CollectionSearchParams) -> Result<Vec<SearchResult>>;
+    fn delete_collection(&self, params: CollectionParams) -> Result<()>;
+    fn reset(&self) -> Result<()>;
+}
+```
+
+The implementation must support all three search modes and return NARS-annotated results when enabled.
+
+#### 4.2 Update `LadybugMemoryStorage` — `Storage` trait
+
+Match the exact crewAI-rust `Storage` trait:
+
+```rust
+pub trait Storage: Send + Sync {
+    fn save(&self, value: &str, metadata: &HashMap<String, Value>) -> Result<()>;
+    fn search(&self, query: &str, limit: usize, score_threshold: f64) -> Result<Vec<Value>>;
+    fn reset(&self) -> Result<()>;
+}
+```
+
+#### 4.3 Update `LadybugKnowledgeStorage` — `BaseKnowledgeStorage` trait
+
+```rust
+pub trait BaseKnowledgeStorage: Send + Sync {
+    fn search(&self, query: &str, limit: usize, score_threshold: f64) -> Result<Vec<Value>>;
+    fn save(&self, documents: Vec<String>) -> Result<()>;
+    fn save_chunks(&self, chunks: Vec<String>, metadata: Vec<HashMap<String, Value>>) -> Result<()>;
+    fn reset(&self) -> Result<()>;
 }
 ```
 
 ---
 
-### 7. Counterfactual Fork API
+### 5. Multi-Agent Hosting Patterns (Inspired by Bedrock Multi-Runtime)
 
-Expose `Database::fork()` with a crewAI-friendly interface:
+Bedrock demonstrates hosting multiple agents in separate runtimes with a supervisor orchestrator. Ladybug should support this natively.
+
+#### 5.1 `DistributedCrewBridge` — Multi-Process Agent Hosting
+
+```rust
+pub struct DistributedCrewBridge {
+    local_bridge: CrewBridge,
+    remote_agents: HashMap<u8, RemoteAgentHandle>,
+    discovery: AgentDiscoveryService,
+}
+
+pub struct RemoteAgentHandle {
+    pub agent_slot: u8,
+    pub endpoint: String,
+    pub transport: RemoteTransport,
+    pub health: AgentHealth,
+    pub persona_cache: Option<Persona>,
+}
+
+pub enum RemoteTransport {
+    ArrowFlight(String),
+    HammingUdp { endpoint: String, lane: u8 },
+    Http(String),
+}
+
+impl DistributedCrewBridge {
+    /// Register a remote agent accessible via Arrow Flight.
+    pub fn register_remote(&mut self, endpoint: &str) -> Result<u8>;
+
+    /// Discover agents on the local network via UDP broadcast.
+    pub fn discover_agents(&mut self, timeout: Duration) -> Vec<RemoteAgentHandle>;
+
+    /// Submit a task — routes to local or remote agent transparently.
+    pub fn submit_task(&mut self, task: CrewTask) -> DispatchResult;
+
+    /// Health check all remote agents.
+    pub fn health_check(&mut self) -> Vec<(u8, AgentHealth)>;
+}
+```
+
+---
+
+### 6. Managed Memory with Session Continuity (Inspired by Bedrock AgentCore Memory)
+
+Bedrock provides managed memory enabling "rich, personalized agent experiences." Ladybug's `MemoryBank` needs persistence and session-aware recall.
+
+#### 6.1 Memory Persistence
+
+Extend `MemoryBank` in `kernel_extensions.rs`:
+
+```rust
+impl MemoryBank {
+    /// Persist all memories to Lance storage.
+    pub async fn persist(&self, db: &Database) -> Result<()>;
+
+    /// Load memories from Lance storage.
+    pub async fn load(&mut self, db: &Database, agent_slot: Option<u8>) -> Result<usize>;
+
+    /// Session-scoped recall: only return memories from the current session.
+    pub fn recall_session(
+        &self,
+        session_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> Vec<&KernelMemory>;
+
+    /// Cross-session recall: search all memories with session attribution.
+    pub fn recall_global(
+        &self,
+        query: &str,
+        limit: usize,
+        score_threshold: f32,
+    ) -> Vec<(&KernelMemory, f32)>;
+
+    /// Memory consolidation: merge duplicates, NARS-revise conflicts,
+    /// crystal-compress old memories.
+    pub fn consolidate(&mut self, kernel: &SemanticKernel, space: &BindSpace) -> ConsolidationReport;
+}
+
+pub struct ConsolidationReport {
+    pub duplicates_merged: usize,
+    pub conflicts_revised: usize,
+    pub memories_compressed: usize,
+    pub total_after: usize,
+}
+```
+
+---
+
+### 7. OpenTelemetry-Native Observability (Inspired by Bedrock AgentCore Observability)
+
+Bedrock uses OpenTelemetry for unified dashboards. Ladybug's `ObservabilityManager` should export OTEL-compatible data.
+
+#### 7.1 OTEL Export
+
+Extend `ObservabilityManager`:
+
+```rust
+impl ObservabilityManager {
+    /// Export all traces as OpenTelemetry spans.
+    pub fn export_otel(&self) -> Vec<OtelSpan>;
+
+    /// Create a live OTEL exporter that streams spans as they're created.
+    pub fn live_exporter(&self) -> OtelExporter;
+
+    /// Dashboard summary: agent utilization, task throughput, error rates,
+    /// handover frequency, memory usage, guardrail trigger rates.
+    pub fn dashboard(&self) -> DashboardMetrics;
+}
+
+pub struct OtelSpan {
+    pub trace_id: String,
+    pub span_id: String,
+    pub parent_span_id: Option<String>,
+    pub operation_name: String,
+    pub start_time: u64,
+    pub end_time: u64,
+    pub attributes: HashMap<String, String>,
+    pub status: SpanStatus,
+}
+
+pub struct DashboardMetrics {
+    pub agents_active: usize,
+    pub tasks_completed: u64,
+    pub tasks_failed: u64,
+    pub avg_task_duration_ms: f64,
+    pub handovers_executed: u64,
+    pub guardrail_blocks: u64,
+    pub memory_entries: u64,
+    pub a2a_messages_sent: u64,
+    pub kernel_ops_executed: u64,
+}
+```
+
+---
+
+### 8. Bidirectional Streaming Agent Support
+
+Bedrock demonstrates bidirectional streaming for voice agents. Ladybug should support streaming for any data modality.
+
+#### 8.1 Streaming Protocol
+
+Create `src/runtime/streaming.rs`:
+
+```rust
+pub struct StreamingSession {
+    pub session_id: String,
+    pub agent_slot: u8,
+    pub input_tx: mpsc::Sender<StreamChunk>,
+    pub output_rx: mpsc::Receiver<StreamChunk>,
+}
+
+pub struct StreamChunk {
+    pub sequence: u64,
+    pub data: StreamData,
+    pub fingerprint: Option<[u64; FINGERPRINT_WORDS]>,
+}
+
+pub enum StreamData {
+    Text(String),
+    Json(Value),
+    Binary(Vec<u8>),
+    ToolCall { name: String, args: Value },
+    ToolResult { name: String, result: Value },
+    Interrupt,
+    Complete,
+}
+
+impl AgentRuntime {
+    /// Open a bidirectional streaming session.
+    pub async fn open_stream(
+        &self,
+        agent_handle: &AgentHandle,
+        session_id: &str,
+    ) -> Result<StreamingSession>;
+}
+```
+
+---
+
+### 9. Counterfactual Fork API Enhancements
+
+The existing `world/counterfactual.rs` needs crewAI-friendly exposure:
 
 ```rust
 impl Database {
     /// Fork the database for counterfactual exploration.
     /// Returns a new Database instance with copy-on-write semantics.
-    /// The fork shares all data with the parent until writes diverge.
     pub fn fork_for_agent(&self, agent_id: &str, hypothesis: &str) -> Result<Database, Error>;
 
     /// Compare two forks: what changed between them?
@@ -350,104 +541,324 @@ impl Database {
     pub fn merge_fork(&mut self, fork: Database, merge_strategy: MergeStrategy) -> Result<(), Error>;
 }
 
-pub struct ForkDiff {
-    pub added_nodes: Vec<String>,
-    pub modified_nodes: Vec<(String, Value, Value)>, // id, old, new
-    pub added_edges: Vec<String>,
-    pub divergence_score: f64,
-}
-
 pub enum MergeStrategy {
-    /// Accept all changes from fork
     AcceptAll,
-    /// Only accept changes with NARS confidence above threshold
     ConfidenceThreshold(f64),
-    /// Manual review (returns pending changes)
     Manual,
 }
 ```
 
-This enables agents to **speculatively explore** without corrupting shared state. An agent can fork, try a hypothesis, and merge back only if results are good.
-
 ---
 
-## Nice-to-Have Expansions (Future)
+### 10. German Translations Support
 
-### 8. Crystal LM Compression for Memory (experimental)
-
-Use the existing `extensions/codebook/` crystal compression for long-term memory compaction. When agent memory exceeds a threshold, older memories get crystal-compressed (claimed 140M:1 ratio). Decompression happens on-demand during search.
-
-### 9. Consciousness Stack for Agent Self-Monitoring
-
-Expose the 7-layer consciousness stack (`cognitive/consciousness.rs`) as agent introspection:
+Expose I18N capability for multi-lingual crews:
 
 ```rust
-pub struct AgentConsciousness {
-    pub coherence_score: f64,        // 0.0-1.0, how consistent is agent behavior
-    pub thinking_style: [f64; 7],    // weights across 7 cognitive dimensions
-    pub emergence_metric: f64,       // novelty of agent's recent outputs
-    pub dominant_layer: usize,       // which cognitive layer is most active
+impl GrammarTriangle {
+    /// Analyze text with language hint for improved NSM mapping.
+    pub fn analyze_with_lang(&self, text: &str, lang: &str) -> AnalysisResult;
 }
 ```
 
-Agents could self-monitor: "my coherence dropped below 0.5, I should re-read the task description."
-
-### 10. mRNA Resonance Fields for Cross-Agent Knowledge Pollination
-
-Use `fabric/mrna_resonance.rs` to automatically propagate relevant knowledge between agents without explicit communication. When agent A stores a fact that resonates (Hamming similarity > threshold) with agent B's active query context, the fact is automatically surfaced to B. This is **ambient awareness** — agents learn from each other's discoveries passively.
-
-### 11. Quantum-Inspired Operators for Embedding Similarity
-
-Use `core/quantum.rs` linear mappings and measurement collapse for a novel similarity metric:
-- Instead of cosine similarity, use the quantum measurement probability
-- Fingerprints exist in superposition until "measured" by a query
-- Collapse produces a definite result with a probability score
-
-This is mathematically equivalent to a specific kernel function but provides a more nuanced similarity metric for edge cases where cosine similarity plateaus.
-
-### 12. Firefly Instruction Frames as Agent Communication Protocol
-
-Define a compact binary protocol for inter-agent messages using the existing 1250-bit Firefly frame format. Each frame encodes: sender(8bit) + receiver(8bit) + operation(12bit) + payload(1222bit). At ~156 bytes per message, this is 10-100x more compact than JSON-RPC for structured agent communication.
-
-### 13. BindSpace as Universal Agent Address Book
-
-Use the 8+8 bit addressing (`prefix:slot`, 65,536 addresses) as a global agent/tool/knowledge registry. Each agent, tool, and knowledge source gets a BindSpace address. Lookups are O(1). This replaces string-based name resolution throughout crewAI.
+The 65 NSM universal primitives are inherently language-independent. Adding language hints improves tokenization and morphological analysis before NSM projection.
 
 ---
 
-## File Structure
+## File Structure (New Files Only)
 
 ```
-src/crewai_compat/
-    mod.rs                      // Feature-gated: #[cfg(feature = "crewai")]
-    client.rs                   // LadybugClient (BaseClient impl)
-    embedder.rs                 // GrammarTriangleEmbedder (BaseEmbeddingsProvider impl)
-    memory_storage.rs           // LadybugMemoryStorage (Storage impl)
-    knowledge_storage.rs        // LadybugKnowledgeStorage (BaseKnowledgeStorage impl)
-    flight_transport.rs         // ArrowFlightTransport (BaseTransport impl)
-    udp_transport.rs            // HammingUdpTransport (BaseTransport impl)
-    agent_card.rs               // LadybugAgentCard (A2A capability discovery)
-    nars_scoring.rs             // NarsScorer (structured recall)
-    events.rs                   // Ladybug-specific event types
-    xai_provider.rs             // xAI/Grok LLM provider adapter
+src/
+    runtime/
+        mod.rs                  // AgentRuntime, RuntimeConfig
+        session.rs              // SessionManager, AgentSession, IsolationMode
+        middleware.rs           // Middleware trait, MiddlewareChain, built-in middleware
+        streaming.rs            // StreamingSession, StreamChunk, StreamData
+    gateway/
+        mod.rs                  // ToolGateway, GatewayTool, ToolSource
+        openapi.rs              // OpenAPI spec → GatewayTool conversion
+        mcp_import.rs           // MCP server → GatewayTool import
+    identity/
+        mod.rs                  // AgentIdentity, IdentityProvider, Capability
+        ed25519.rs              // Ed25519 keypair management
+        delegation.rs           // DelegationToken, capability chains
+    policy/
+        mod.rs                  // PolicyEngine, PolicyRule, PolicyEffect
+        cedar.rs                // Cedar import/export
+        evaluator.rs            // Policy condition evaluation
+    evaluation/
+        mod.rs                  // EvaluationEngine, EvalContext, EvalScore
+        evaluators/
+            mod.rs              // Built-in evaluator registry
+            tool_selection.rs   // ToolSelectionAccuracy
+            helpfulness.rs      // OutputHelpfulness
+            completeness.rs     // OutputCompleteness
+            coherence.rs        // ReasoningCoherence
+            grounding.rs        // FactualGrounding
+            handover.rs         // HandoverQuality
+            efficiency.rs       // ToolCallEfficiency
+            memory.rs           // MemoryUtilization
+            safety.rs           // SafetyCompliance
+            policy.rs           // PolicyCompliance
+            latency.rs          // LatencyBudget
+            causal.rs           // CausalConsistency
+            persona.rs          // PersonaAlignment
+    crewai_compat/
+        mod.rs                  // (existing, update re-exports)
+        client.rs               // (existing, update trait signatures)
+        memory_storage.rs       // (existing, update trait signatures)
+        knowledge_storage.rs    // (existing, update trait signatures)
+        distributed_bridge.rs   // DistributedCrewBridge
 ```
 
-## Cargo.toml Addition
+## Cargo.toml Additions
 
 ```toml
 [features]
 default = []
 crewai = ["dep:crewai"]
+runtime = ["tokio/full"]
+gateway = []
+identity = ["dep:ed25519-dalek"]
+full = ["crewai", "runtime", "gateway", "identity"]
 
 [dependencies]
 crewai = { path = "../crewai-rust", optional = true }
+ed25519-dalek = { version = "2", optional = true }
 ```
+
+---
+
+### 11. Policy Engine — Deterministic Action Control (Inspired by Bedrock AgentCore Policy)
+
+Bedrock's Policy feature intercepts every tool call at the Gateway layer and enforces deterministic rules defined in natural language (compiled to Cedar policy language). This enforcement happens **outside the LLM reasoning loop** — it cannot be circumvented by prompt manipulation.
+
+Ladybug already has `KernelGuardrail` for content filtering. This extends it with **action-level policy enforcement**.
+
+Create `src/policy/mod.rs`:
+
+```rust
+pub struct PolicyEngine {
+    pub rules: Vec<PolicyRule>,
+    pub enforcement: EnforcementMode,
+}
+
+pub struct PolicyRule {
+    pub name: String,
+    pub description: String,           // Natural language definition
+    pub effect: PolicyEffect,
+    pub principal: PolicyPrincipal,     // Which agent(s) this applies to
+    pub action: PolicyAction,           // Which operations are constrained
+    pub resource: PolicyResource,       // Which targets are protected
+    pub conditions: Vec<PolicyCondition>,
+}
+
+pub enum PolicyEffect {
+    Allow,
+    Deny,
+}
+
+pub enum PolicyPrincipal {
+    AllAgents,
+    Agent(u8),                          // Specific agent slot
+    AgentWithRole(String),              // Agents matching a role
+    AgentGroup(Vec<u8>),
+}
+
+pub enum PolicyAction {
+    ToolCall(String),                   // Specific tool
+    AnyToolCall,
+    A2AMessage(MessageKind),
+    MemoryWrite,
+    MemoryRead,
+    BlackboardCommit,
+    Handover,
+    CamOp(u16),                         // Specific CAM opcode
+    Custom(String),
+}
+
+pub enum PolicyResource {
+    Any,
+    Tool(String),
+    Collection(String),
+    Zone(KernelZone),
+    Prefix(u8),
+    Custom(String),
+}
+
+pub struct PolicyCondition {
+    pub key: String,
+    pub operator: ConditionOperator,
+    pub value: Value,
+}
+
+pub enum ConditionOperator {
+    Equals,
+    NotEquals,
+    Contains,
+    GreaterThan,
+    LessThan,
+    Matches(String),                    // Regex
+}
+
+pub enum EnforcementMode {
+    /// Block denied actions (production)
+    Strict,
+    /// Log but allow denied actions (testing)
+    AuditOnly,
+    /// Block + escalate to orchestrator for review
+    Escalate,
+}
+
+impl PolicyEngine {
+    /// Evaluate a proposed action against all rules.
+    /// Returns Allow/Deny with the rule that decided.
+    pub fn evaluate(&self, request: &PolicyRequest) -> PolicyDecision;
+
+    /// Define a rule from natural language description.
+    /// The description is fingerprinted for semantic matching
+    /// against future requests.
+    pub fn add_rule_natural(&mut self, description: &str) -> Result<PolicyRule>;
+
+    /// Export all rules as Cedar-compatible policy text.
+    pub fn export_cedar(&self) -> String;
+
+    /// Import rules from Cedar policy text.
+    pub fn import_cedar(&mut self, cedar: &str) -> Result<usize>;
+}
+
+pub struct PolicyRequest {
+    pub agent_slot: u8,
+    pub action: PolicyAction,
+    pub resource: PolicyResource,
+    pub context: HashMap<String, Value>,
+}
+
+pub struct PolicyDecision {
+    pub effect: PolicyEffect,
+    pub rule_name: Option<String>,
+    pub reason: String,
+}
+```
+
+**Example policies**:
+```
+"Agent 3 cannot delete any collection"
+"Only the orchestrator can initiate handovers"
+"No agent can write to BindSpace zone 0x80-0xFF without verification"
+"Tool calls to external APIs require confidence > 0.7"
+```
+
+---
+
+### 12. Evaluation Engine — Continuous Quality Scoring (Inspired by Bedrock AgentCore Evaluations)
+
+Bedrock Evaluations provides 13 built-in evaluators for helpfulness, tool selection accuracy, and output quality. Ladybug should provide fingerprint-native evaluation that's richer than LLM-based scoring.
+
+Create `src/evaluation/mod.rs`:
+
+```rust
+pub struct EvaluationEngine {
+    pub evaluators: Vec<Box<dyn Evaluator>>,
+    pub history: Vec<EvaluationResult>,
+}
+
+pub trait Evaluator: Send + Sync {
+    fn name(&self) -> &str;
+    fn evaluate(&self, context: &EvalContext) -> EvalScore;
+}
+
+pub struct EvalContext {
+    pub agent_slot: u8,
+    pub task_description: String,
+    pub task_output: String,
+    pub tool_calls: Vec<ToolCallRecord>,
+    pub handovers: Vec<HandoverRecord>,
+    pub memory_accesses: Vec<MemoryAccessRecord>,
+    pub duration_ms: u64,
+    pub truth_values: Vec<KernelTruth>,
+}
+
+pub struct EvalScore {
+    pub evaluator: String,
+    pub score: f32,        // 0.0-1.0
+    pub details: String,
+    pub pass: bool,
+}
+
+pub struct EvaluationResult {
+    pub session_id: String,
+    pub agent_slot: u8,
+    pub scores: Vec<EvalScore>,
+    pub composite_score: f32,
+    pub timestamp: u64,
+}
+```
+
+**Built-in evaluators** (13, matching Bedrock):
+
+| Evaluator | What It Measures |
+|-----------|-----------------|
+| `ToolSelectionAccuracy` | Did the agent pick the right tool? (Compare tool fingerprint vs task fingerprint similarity) |
+| `OutputHelpfulness` | Does the output address the task? (Fingerprint similarity between task and output) |
+| `OutputCompleteness` | Are all required outputs present? (Schema validation) |
+| `ReasoningCoherence` | Does the reasoning chain hold? (NARS truth value consistency) |
+| `FactualGrounding` | Are claims supported by evidence? (KernelGuardrail grounding check) |
+| `HandoverQuality` | Were handovers justified? (FlowState + affinity delta) |
+| `ToolCallEfficiency` | Were tool calls necessary? (Redundancy detection via fingerprint dedup) |
+| `MemoryUtilization` | Did the agent use available memory? (Recall rate vs available knowledge) |
+| `SafetyCompliance` | Did the agent stay within guardrails? (GuardrailResult review) |
+| `PolicyCompliance` | Did the agent respect all policies? (PolicyDecision log review) |
+| `LatencyBudget` | Did execution fit within time constraints? |
+| `CausalConsistency` | Were causal claims valid? (Pearl's rung verification) |
+| `PersonaAlignment` | Did the agent behave consistently with its persona? (Fingerprint drift) |
+
+---
+
+## Architecture Comparison: Bedrock AgentCore vs Ladybug-rs
+
+| Bedrock AgentCore | Ladybug-rs Equivalent | Gap |
+|---|---|---|
+| Runtime (serverless, session isolation) | **NEW**: `AgentRuntime` + `SessionManager` | To build |
+| Gateway (Lambda/API → MCP) | **NEW**: `ToolGateway` (OpenAPI/MCP → CAM) | To build |
+| Memory (managed, episodic + long-term) | `MemoryBank` exists, needs persistence + session-aware recall + episodic learning | Extend |
+| Identity (IAM, Cognito, Okta, Auth0) | **NEW**: `AgentIdentity` with Ed25519 + delegation | To build |
+| Observability (OpenTelemetry) | `ObservabilityManager` exists, needs OTEL export | Extend |
+| Policy (Cedar rules, deterministic enforcement) | **NEW**: `PolicyEngine` with fingerprint-native rules + Cedar export | To build |
+| Evaluations (13 built-in evaluators) | **NEW**: `EvaluationEngine` with 13 fingerprint-native evaluators | To build |
+| Tools (Code Interpreter, Browser) | CAM operations + Gateway tools | Partial — add built-in tools |
+| Multi-agent (supervisor patterns) | `CrewBridge` + `MetaOrchestrator` | Complete |
+| A2A (agent-to-agent) | `A2AProtocol` with XOR channels | Complete |
+| Middleware (ASGI) | **NEW**: `MiddlewareChain` | To build |
+| Bidirectional streaming | **NEW**: `StreamingSession` | To build |
+
+**Ladybug-rs advantages over Bedrock AgentCore** (no equivalent in Bedrock):
+- Semantic kernel with NARS reasoning, causal hierarchy, crystallization
+- Fingerprint-based semantic routing (no string matching)
+- Persona compatibility with 5-axis volition model
+- Dunning-Kruger gap detection in handover policy
+- Counterfactual exploration with copy-on-write forks
+- 4096 CAM-addressable operations
+- Crystal LM 140M:1 memory compression
+- mRNA resonance fields for ambient knowledge propagation
+- Ice-caked committed facts in blackboard
+- Affinity learning from collaboration history
+- Policy enforcement via fingerprint similarity (not just string matching)
+- Causal consistency evaluation via Pearl's 3-rung hierarchy
+- Agent persona drift detection
+
+**Key architectural distinction**: Bedrock AgentCore enforces policies at the **Gateway layer** (intercepting HTTP/MCP calls). Ladybug can enforce policies at the **BindSpace layer** (intercepting fingerprint operations). This is more fundamental — it controls not just tool calls but memory writes, knowledge access, A2A messages, and kernel operations. Every addressable action in the 65,536-address space can be policy-gated.
+
+---
 
 ## Constraints
 
 1. **No breaking changes** to existing ladybug-rs public APIs
 2. All crewAI integration behind `#[cfg(feature = "crewai")]`
-3. Existing tests must continue to pass
-4. New code must compile with `cargo check --all-features`
-5. Blackboard extensions must be backward-compatible (new fields are `Option<T>`)
-6. Arrow Flight transport must work without ladybug-rs server running (graceful fallback)
+3. Runtime/Gateway/Identity behind their own feature flags
+4. Existing tests must continue to pass
+5. New code must compile with `cargo check --all-features`
+6. Blackboard extensions must be backward-compatible (new fields are `Option<T>`)
+7. Arrow Flight transport must work without ladybug-rs server running (graceful fallback)
+8. Every public type has doc comments with examples
+9. No `unwrap()` in library code — all errors via `Result`/`anyhow`
