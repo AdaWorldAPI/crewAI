@@ -29,8 +29,38 @@ impl ScrapeWebsiteTool {
         self
     }
 
-    pub fn run(&self, _args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
-        anyhow::bail!("ScrapeWebsiteTool: not yet implemented - requires HTTP client and HTML parsing")
+    /// Scrape the full text content of a website.
+    ///
+    /// # Arguments (in `args`)
+    /// * `website_url` - The URL to scrape.
+    pub fn run(&self, args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
+        let url = args
+            .get("website_url")
+            .and_then(|v| v.as_str())
+            .or(self.website_url.as_deref())
+            .ok_or_else(|| anyhow::anyhow!("Missing required argument: website_url"))?;
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .user_agent("Mozilla/5.0 (compatible; CrewAI/1.0)")
+            .build()?;
+
+        let body = client.get(url).send()?.text()?;
+
+        // Strip HTML tags for plain text (basic regex approach)
+        let re_tags = regex::Regex::new(r"<script[^>]*>[\s\S]*?</script>")
+            .unwrap_or_else(|_| regex::Regex::new(r"<[^>]+>").unwrap());
+        let no_scripts = re_tags.replace_all(&body, " ");
+        let re_style = regex::Regex::new(r"<style[^>]*>[\s\S]*?</style>")
+            .unwrap_or_else(|_| regex::Regex::new(r"<[^>]+>").unwrap());
+        let no_styles = re_style.replace_all(&no_scripts, " ");
+        let re_html = regex::Regex::new(r"<[^>]+>").unwrap();
+        let text = re_html.replace_all(&no_styles, " ");
+        // Collapse whitespace
+        let re_ws = regex::Regex::new(r"\s+").unwrap();
+        let clean = re_ws.replace_all(&text, " ").trim().to_string();
+
+        Ok(Value::String(clean))
     }
 }
 

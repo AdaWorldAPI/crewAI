@@ -47,8 +47,36 @@ impl BraveSearchTool {
         self
     }
 
-    pub fn run(&self, _args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
-        anyhow::bail!("BraveSearchTool: not yet implemented - requires Brave Search API integration")
+    /// Run a Brave Search query.
+    ///
+    /// # Arguments (in `args`)
+    /// * `search_query` - The search query string.
+    pub fn run(&self, args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
+        let query = args
+            .get("search_query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing required argument: search_query"))?;
+
+        let api_key = self
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("BRAVE_API_KEY").ok())
+            .ok_or_else(|| anyhow::anyhow!("Missing BRAVE_API_KEY"))?;
+
+        let client = reqwest::blocking::Client::new();
+        let mut request = client
+            .get("https://api.search.brave.com/res/v1/web/search")
+            .header("Accept", "application/json")
+            .header("Accept-Encoding", "gzip")
+            .header("X-Subscription-Token", &api_key)
+            .query(&[("q", query), ("count", &self.max_results.to_string())]);
+
+        if let Some(ref country) = self.country {
+            request = request.query(&[("country", country.as_str())]);
+        }
+
+        let resp = request.send()?.json::<Value>()?;
+        Ok(resp)
     }
 }
 
@@ -113,8 +141,50 @@ impl SerperDevTool {
         self
     }
 
-    pub fn run(&self, _args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
-        anyhow::bail!("SerperDevTool: not yet implemented - requires Serper.dev API integration")
+    /// Run a Serper.dev Google Search query.
+    ///
+    /// # Arguments (in `args`)
+    /// * `search_query` - The search query string.
+    pub fn run(&self, args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
+        let query = args
+            .get("search_query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing required argument: search_query"))?;
+
+        let api_key = self
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("SERPER_API_KEY").ok())
+            .ok_or_else(|| anyhow::anyhow!("Missing SERPER_API_KEY"))?;
+
+        let mut body = serde_json::json!({
+            "q": query,
+            "num": self.max_results,
+        });
+        if let Some(ref country) = self.country {
+            body["gl"] = Value::String(country.clone());
+        }
+        if let Some(ref lang) = self.language {
+            body["hl"] = Value::String(lang.clone());
+        }
+
+        let endpoint = match self.search_type.as_str() {
+            "news" => "https://google.serper.dev/news",
+            "images" => "https://google.serper.dev/images",
+            "places" => "https://google.serper.dev/places",
+            _ => "https://google.serper.dev/search",
+        };
+
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .post(endpoint)
+            .header("X-API-KEY", &api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()?
+            .json::<Value>()?;
+
+        Ok(resp)
     }
 }
 

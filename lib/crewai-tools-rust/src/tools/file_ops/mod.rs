@@ -29,8 +29,21 @@ impl FileReadTool {
         self
     }
 
-    pub fn run(&self, _args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
-        anyhow::bail!("FileReadTool: not yet implemented - requires filesystem integration")
+    /// Read the contents of a file.
+    ///
+    /// # Arguments (in `args`)
+    /// * `file_path` - Path to the file to read.
+    pub fn run(&self, args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
+        let path = args
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .or(self.file_path.as_deref())
+            .ok_or_else(|| anyhow::anyhow!("Missing required argument: file_path"))?;
+
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read file '{}': {}", path, e))?;
+
+        Ok(Value::String(content))
     }
 }
 
@@ -79,8 +92,54 @@ impl FileWriterTool {
         self
     }
 
-    pub fn run(&self, _args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
-        anyhow::bail!("FileWriterTool: not yet implemented - requires filesystem integration")
+    /// Write content to a file.
+    ///
+    /// # Arguments (in `args`)
+    /// * `content` - The content to write.
+    /// * `filename` - The filename (optional if set on struct).
+    /// * `directory` - The directory (optional if set on struct).
+    pub fn run(&self, args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
+        let content = args
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing required argument: content"))?;
+
+        let filename = args
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| self.filename.clone())
+            .ok_or_else(|| anyhow::anyhow!("Missing required argument: filename"))?;
+
+        let directory = args
+            .get("directory")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| self.directory.clone())
+            .unwrap_or_else(|| ".".to_string());
+
+        let dir_path = std::path::Path::new(&directory);
+        if !dir_path.exists() {
+            std::fs::create_dir_all(dir_path)
+                .map_err(|e| anyhow::anyhow!("Failed to create directory '{}': {}", directory, e))?;
+        }
+
+        let file_path = dir_path.join(&filename);
+
+        if file_path.exists() && !self.overwrite {
+            anyhow::bail!(
+                "File '{}' already exists and overwrite is disabled",
+                file_path.display()
+            );
+        }
+
+        std::fs::write(&file_path, content)
+            .map_err(|e| anyhow::anyhow!("Failed to write file '{}': {}", file_path.display(), e))?;
+
+        Ok(Value::String(format!(
+            "Successfully wrote to {}",
+            file_path.display()
+        )))
     }
 }
 
@@ -155,8 +214,37 @@ impl DirectoryReadTool {
         self
     }
 
-    pub fn run(&self, _args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
-        anyhow::bail!("DirectoryReadTool: not yet implemented - requires filesystem integration")
+    /// List the contents of a directory.
+    ///
+    /// # Arguments (in `args`)
+    /// * `directory` - Path to the directory to list.
+    pub fn run(&self, args: HashMap<String, Value>) -> Result<Value, anyhow::Error> {
+        let dir = args
+            .get("directory")
+            .and_then(|v| v.as_str())
+            .or(self.directory.as_deref())
+            .ok_or_else(|| anyhow::anyhow!("Missing required argument: directory"))?;
+
+        let entries: Vec<String> = std::fs::read_dir(dir)
+            .map_err(|e| anyhow::anyhow!("Failed to read directory '{}': {}", dir, e))?
+            .filter_map(|entry| {
+                entry.ok().map(|e| {
+                    let path = e.path();
+                    let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    if path.is_dir() {
+                        format!("{}/", name)
+                    } else {
+                        name
+                    }
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "directory": dir,
+            "entries": entries,
+            "count": entries.len(),
+        }))
     }
 }
 
