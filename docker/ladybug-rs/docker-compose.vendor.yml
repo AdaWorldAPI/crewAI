@@ -1,0 +1,101 @@
+# =============================================================================
+# Docker Compose — LadybugDB Vendor Build
+# =============================================================================
+# Builds with vendored Lance 2.0.0, DataFusion 51, Arrow 57, Tonic 0.14
+# Content-addressable index: 1024-byte aligned (power of 2) CAM buckets
+#
+# Usage:
+#   docker-compose -f docker-compose.vendor.yml up --build
+#   docker-compose -f docker-compose.vendor.yml up -d
+#   docker-compose -f docker-compose.vendor.yml --profile flight up
+#
+# Prerequisites:
+#   git submodule update --init --recursive
+#   (or Dockerfile.vendor auto-clones from AdaWorldAPI forks)
+# =============================================================================
+
+version: '3.9'
+
+services:
+  # ---------------------------------------------------------------------------
+  # LadybugDB — vendor build with all features
+  # HTTP REST on :8080, optional Flight gRPC on :50051
+  # ---------------------------------------------------------------------------
+  ladybug-vendor:
+    build:
+      context: .
+      dockerfile: Dockerfile.vendor
+      args:
+        FEATURES: "simd,parallel,flight,crewai,lancedb,codebook,hologram,spo,compress,quantum"
+        CAM_ALIGN: "1024"
+    container_name: ladybug-vendor
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      - LADYBUG_HOST=0.0.0.0
+      - LADYBUG_PORT=8080
+      - LADYBUG_FLIGHT_PORT=50051
+      - LADYBUG_FLIGHT=1
+      - LADYBUG_DATA_DIR=/data
+      - LADYBUG_CAM_ALIGN=1024
+      - LADYBUG_CAM_BUCKET_SIZE=4096
+      - LADYBUG_CAM_FP_BITS=10000
+      - RUST_LOG=info
+    volumes:
+      - ladybug-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+
+  # ---------------------------------------------------------------------------
+  # Flight gRPC only (Arrow Flight + Tonic 0.14)
+  # For services that only need the gRPC interface
+  # ---------------------------------------------------------------------------
+  ladybug-flight:
+    build:
+      context: .
+      dockerfile: Dockerfile.vendor
+      args:
+        FEATURES: "simd,parallel,flight,crewai,lancedb,codebook,hologram,spo,compress,quantum"
+        CAM_ALIGN: "1024"
+    container_name: ladybug-vendor-flight
+    profiles:
+      - flight
+    ports:
+      - "50051:50051"
+    environment:
+      - LADYBUG_HOST=0.0.0.0
+      - LADYBUG_FLIGHT_PORT=50051
+      - LADYBUG_DATA_DIR=/data
+      - LADYBUG_CAM_ALIGN=1024
+      - LADYBUG_CAM_BUCKET_SIZE=4096
+      - RUST_LOG=info
+    volumes:
+      - ladybug-data:/data
+    entrypoint: ["/usr/local/bin/ladybug-flight"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+volumes:
+  ladybug-data:
+    driver: local
+
+networks:
+  default:
+    name: ladybug-vendor-network

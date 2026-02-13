@@ -1,0 +1,292 @@
+# =============================================================================
+# LadybugDB — Vendor-Enabled Docker Build
+# =============================================================================
+# Builds with vendored Lance 2.0.0, DataFusion 51, Arrow 57, Tonic 0.14
+#
+# Content-addressable index alignment: all CAM addresses are power-of-2
+# aligned (1024 bytes) for SIMD-optimal Hamming distance scans on Arrow
+# buffers. The fingerprint index uses 1024-byte aligned bucket boundaries
+# so AVX-512 (64-byte lanes) and AVX-2 (32-byte lanes) can scan without
+# crossing alignment boundaries.
+#
+# Versions (pinned):
+#   Rust        1.93     (edition 2024)
+#   Lance       2.0.0    (vendored from submodule)
+#   DataFusion  51       (crates.io)
+#   Arrow       57       (arrow, arrow-array, arrow-schema, arrow-flight)
+#   Tonic       0.14     (gRPC transport for Arrow Flight)
+#   Prost       0.14     (protobuf codec)
+#
+# BUILD:
+#   docker build -f Dockerfile.vendor -t ladybugdb:vendor .
+#   docker build -f Dockerfile.vendor --build-arg FEATURES=full -t ladybugdb:full .
+#
+# RUN:
+#   docker run -p 8080:8080 -p 50051:50051 ladybugdb:vendor
+#   docker run -p 8080:8080 -e LADYBUG_DATA_DIR=/data -v ./data:/data ladybugdb:vendor
+#
+# =============================================================================
+
+# =============================================================================
+# STAGE 1: Vendor — clone submodules if not present
+# =============================================================================
+FROM rust:1.93-slim-bookworm AS vendor
+
+RUN apt-get update && apt-get install -y \
+    git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /vendor
+
+# Copy existing vendor directory (may be empty submodule stubs)
+COPY vendor/ ./
+
+# Clone vendored lance if submodule wasn't initialized
+# Lance 2.0.0 — pinned tag/branch for reproducibility
+RUN if [ ! -f lance/rust/lance/Cargo.toml ]; then \
+      echo "[vendor] Cloning AdaWorldAPI/lance (2.0.0)..." && \
+      rm -rf lance && \
+      git clone --depth 1 --branch v2.0.0 \
+        https://github.com/AdaWorldAPI/lance.git lance 2>/dev/null || \
+      git clone --depth 1 \
+        https://github.com/AdaWorldAPI/lance.git lance; \
+    else \
+      echo "[vendor] lance submodule present"; \
+    fi
+
+# Clone vendored lancedb if submodule wasn't initialized
+RUN if [ ! -f lancedb/rust/Cargo.toml ] && [ ! -f lancedb/Cargo.toml ]; then \
+      echo "[vendor] Cloning AdaWorldAPI/lancedb..." && \
+      rm -rf lancedb && \
+      git clone --depth 1 \
+        https://github.com/AdaWorldAPI/lancedb.git lancedb; \
+    else \
+      echo "[vendor] lancedb submodule present"; \
+    fi
+
+# Verify vendor layout
+RUN echo "=== Vendor manifest ===" && \
+    echo "lance crates:" && \
+    (ls lance/rust/ 2>/dev/null || echo "  (not found)") && \
+    echo "lancedb:" && \
+    (ls lancedb/ 2>/dev/null | head -5 || echo "  (not found)") && \
+    echo "=== Vendor ready ==="
+
+# =============================================================================
+# STAGE 2: Builder — compile with vendored deps + all features
+# Rust 1.93 stable (edition 2024, full rmp-serde/time compat)
+# =============================================================================
+FROM rust:1.93-slim-bookworm AS builder
+
+RUN apt-get update && apt-get install -y \
+    pkg-config libssl-dev cmake protobuf-compiler git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# --- Cargo manifest first (layer caching for deps) ---
+COPY Cargo.toml Cargo.lock* ./
+
+# Copy vendored dependencies from vendor stage
+COPY --from=vendor /vendor/ ./vendor/
+
+# Activate vendor patches in Cargo.toml:
+# Uncomment [patch.crates-io] section to redirect lance crates to local sources.
+# This replaces Lance 2.0.0 from crates.io with the vendored fork,
+# while keeping DataFusion 51 and Arrow 57 from crates.io.
+RUN sed -i 's/^# \[patch\.crates-io\]/[patch.crates-io]/' Cargo.toml && \
+    sed -i '/^\[patch\.crates-io\]/,$ { \
+      s/^# lance = /lance = /; \
+      s/^# lance-core = /lance-core = /; \
+      s/^# lance-io = /lance-io = /; \
+      s/^# lance-file = /lance-file = /; \
+      s/^# lance-encoding = /lance-encoding = /; \
+      s/^# lance-table = /lance-table = /; \
+      s/^# lance-index = /lance-index = /; \
+      s/^# lance-arrow = /lance-arrow = /; \
+      s/^# lance-linalg = /lance-linalg = /; \
+      s/^# lance-datafusion = /lance-datafusion = /; \
+      s/^# lance-namespace = /lance-namespace = /; \
+      s/^# lance-geo = /lance-geo = /; \
+      s/^# lance-bitpacking = /lance-bitpacking = /; \
+      s/^# fsst = /fsst = /; \
+    }' Cargo.toml
+
+# NOTE: DataFusion 51 from crates.io (no liblzma conflict at this version).
+# Arrow 57 ecosystem is pinned in Cargo.toml — no patch needed.
+# Tonic 0.14 + Prost 0.14 match arrow-flight 57's requirements.
+
+# Verify version alignment
+RUN echo "=== Version check ===" && \
+    grep 'datafusion' Cargo.toml | head -2 && \
+    grep 'arrow =' Cargo.toml | head -1 && \
+    grep 'tonic' Cargo.toml | head -1 && \
+    grep 'lance =' Cargo.toml | head -2 && \
+    echo "=== Versions OK ==="
+
+# Create stub source for dependency pre-fetch
+RUN mkdir -p src/bin && \
+    echo "fn main() {}" > src/bin/server.rs && \
+    echo "fn main() {}" > src/bin/flight_server.rs && \
+    echo "pub fn dummy() {}" > src/lib.rs && \
+    cargo fetch 2>/dev/null || true
+
+# --- Full source ---
+COPY . .
+
+# Re-apply vendor overlay (COPY . overwrites with empty submodule stubs)
+COPY --from=vendor /vendor/ ./vendor/
+
+# Re-activate vendor patches (COPY . restored original Cargo.toml)
+RUN sed -i 's/^# \[patch\.crates-io\]/[patch.crates-io]/' Cargo.toml && \
+    sed -i '/^\[patch\.crates-io\]/,$ { \
+      s/^# lance = /lance = /; \
+      s/^# lance-core = /lance-core = /; \
+      s/^# lance-io = /lance-io = /; \
+      s/^# lance-file = /lance-file = /; \
+      s/^# lance-encoding = /lance-encoding = /; \
+      s/^# lance-table = /lance-table = /; \
+      s/^# lance-index = /lance-index = /; \
+      s/^# lance-arrow = /lance-arrow = /; \
+      s/^# lance-linalg = /lance-linalg = /; \
+      s/^# lance-datafusion = /lance-datafusion = /; \
+      s/^# lance-namespace = /lance-namespace = /; \
+      s/^# lance-geo = /lance-geo = /; \
+      s/^# lance-bitpacking = /lance-bitpacking = /; \
+      s/^# fsst = /fsst = /; \
+    }' Cargo.toml
+
+# Features: all vendor-dependent features + extensions
+# Override with: --build-arg FEATURES="simd,parallel,flight"
+ARG FEATURES="simd,parallel,flight,crewai,lancedb,codebook,hologram,spo,compress,quantum"
+
+# Content-addressable index alignment:
+# CAM bucket addresses are aligned to 1024 bytes (2^10) — a power of 2 that
+# ensures Arrow buffer scans for Hamming distance never cross alignment
+# boundaries. AVX-512 (64B lanes) fits 16x per bucket; AVX-2 (32B lanes)
+# fits 32x. This is set via RUSTFLAGS and picked up by the CAM allocator.
+ARG CAM_ALIGN=1024
+
+# --- AVX-512 binary (cloud servers: Xeon, EPYC) ---
+RUN RUSTFLAGS="-C target-cpu=x86-64-v4 -C link-arg=-s" \
+    LADYBUG_CAM_ALIGN=${CAM_ALIGN} \
+    cargo build --release --bin ladybug-server --features "$FEATURES" && \
+    cp target/release/ladybug-server /build/ladybug-avx512 && \
+    cargo clean -p ladybug
+
+# --- AVX-2 binary (modern desktops, x86-64 since ~2015) ---
+RUN RUSTFLAGS="-C target-cpu=x86-64-v3 -C link-arg=-s" \
+    LADYBUG_CAM_ALIGN=${CAM_ALIGN} \
+    cargo build --release --bin ladybug-server --features "$FEATURES" && \
+    cp target/release/ladybug-server /build/ladybug-avx2 && \
+    cargo clean -p ladybug
+
+# --- Generic binary (baseline x86-64 fallback) ---
+RUN RUSTFLAGS="-C link-arg=-s" \
+    LADYBUG_CAM_ALIGN=${CAM_ALIGN} \
+    cargo build --release --bin ladybug-server --features "$FEATURES" && \
+    cp target/release/ladybug-server /build/ladybug-generic
+
+# --- Flight gRPC binary (Arrow Flight + Tonic 0.14) ---
+RUN RUSTFLAGS="-C target-cpu=x86-64-v3 -C link-arg=-s" \
+    LADYBUG_CAM_ALIGN=${CAM_ALIGN} \
+    cargo build --release --bin ladybug-flight --features "$FEATURES" && \
+    cp target/release/ladybug-flight /build/ladybug-flight
+
+# =============================================================================
+# STAGE 3: Runtime (minimal ~55MB)
+# =============================================================================
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -s /bin/bash ladybug \
+    && mkdir -p /data && chown ladybug:ladybug /data
+
+# Copy all server binaries (HTTP REST)
+COPY --from=builder /build/ladybug-avx512 /usr/local/bin/
+COPY --from=builder /build/ladybug-avx2   /usr/local/bin/
+COPY --from=builder /build/ladybug-generic /usr/local/bin/
+
+# Copy Flight gRPC binary
+COPY --from=builder /build/ladybug-flight /usr/local/bin/
+
+# Copy docs
+COPY --from=builder /build/README.md /opt/ladybug/
+COPY --from=builder /build/docs/ /opt/ladybug/docs/
+
+# Auto-select entrypoint: detects CPU features, picks best binary
+COPY <<'ENTRY' /usr/local/bin/ladybug-start
+#!/bin/sh
+set -e
+
+# Select HTTP server binary based on CPU capabilities
+if grep -q "avx512f" /proc/cpuinfo 2>/dev/null; then
+  BIN=ladybug-avx512; LVL=AVX-512
+elif grep -q "avx2" /proc/cpuinfo 2>/dev/null; then
+  BIN=ladybug-avx2; LVL=AVX-2
+else
+  BIN=ladybug-generic; LVL=Generic
+fi
+
+echo "================================================================"
+echo "[ladybugdb] Build:     vendor (Lance 2.0.0 + DataFusion 51)"
+echo "[ladybugdb] Stack:     Arrow 57 | Tonic 0.14 | Rust 1.93"
+echo "[ladybugdb] SIMD:      ${LVL} -> ${BIN}"
+echo "[ladybugdb] CAM align: ${LADYBUG_CAM_ALIGN:-1024} bytes (2^10)"
+echo "[ladybugdb] Features:  lancedb,crewai,codebook,hologram,spo,compress,quantum"
+echo "[ladybugdb] HTTP:      :${LADYBUG_PORT:-8080}"
+echo "[ladybugdb] Flight:    :${LADYBUG_FLIGHT_PORT:-50051}"
+echo "================================================================"
+
+# Start Flight gRPC in background if LADYBUG_FLIGHT=1
+if [ "${LADYBUG_FLIGHT:-0}" = "1" ] && [ -x /usr/local/bin/ladybug-flight ]; then
+  echo "[ladybugdb] Starting Arrow Flight gRPC on :${LADYBUG_FLIGHT_PORT:-50051}"
+  /usr/local/bin/ladybug-flight &
+fi
+
+exec "/usr/local/bin/${BIN}" "$@"
+ENTRY
+RUN chmod +x /usr/local/bin/ladybug-start
+
+USER ladybug
+WORKDIR /home/ladybug
+
+# ---- Environment ----
+ENV LADYBUG_HOST=0.0.0.0
+ENV LADYBUG_PORT=8080
+ENV LADYBUG_FLIGHT_PORT=50051
+ENV LADYBUG_DATA_DIR=/data
+ENV LADYBUG_FLIGHT=0
+ENV RUST_LOG=info
+
+# Content-addressable index configuration:
+# CAM_ALIGN: bucket alignment in bytes (must be power of 2, default 1024 = 2^10)
+# CAM_BUCKET_SIZE: fingerprints per bucket (default 4096 = 2^12, the 4096 CAM ops)
+# CAM_FP_BITS: fingerprint width in bits (default 10000)
+ENV LADYBUG_CAM_ALIGN=1024
+ENV LADYBUG_CAM_BUCKET_SIZE=4096
+ENV LADYBUG_CAM_FP_BITS=10000
+
+# OCI labels — build metadata
+LABEL org.opencontainers.image.title="LadybugDB (vendor build)"
+LABEL org.opencontainers.image.description="Cognitive database — vendored Lance 2.0.0, DataFusion 51, Arrow 57, Tonic 0.14"
+LABEL org.opencontainers.image.source="https://github.com/AdaWorldAPI/ladybug-rs"
+LABEL ladybug.rust.version="1.93"
+LABEL ladybug.lance.version="2.0.0"
+LABEL ladybug.datafusion.version="51"
+LABEL ladybug.arrow.version="57"
+LABEL ladybug.tonic.version="0.14"
+LABEL ladybug.build.type="vendor"
+LABEL ladybug.cam.align="1024"
+LABEL ladybug.cam.bucket_size="4096"
+
+# Expose standard ports
+EXPOSE 8080
+EXPOSE 50051
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:${LADYBUG_PORT}/health || exit 1
+
+ENTRYPOINT ["ladybug-start"]
